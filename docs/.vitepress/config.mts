@@ -1,4 +1,4 @@
-﻿import { defineConfig } from 'vitepress'
+import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 
 // GitHub-compatible slugify (matches github-slugger algorithm)
@@ -17,11 +17,11 @@ function slugify(str: string): string {
 
 const zhSidebar = [
   {
-    text: '快速开�?,
+    text: '快速开始',
     items: [
-      { text: '安装与启�?, link: '/guide/quick-start' },
+      { text: '安装与启动', link: '/guide/quick-start' },
       { text: '环境变量', link: '/guide/env-vars' },
-      { text: '第三方模�?, link: '/guide/third-party-models' },
+      { text: '第三方模型', link: '/guide/third-party-models' },
       { text: '全局使用', link: '/guide/global-usage' },
       { text: '常见问题', link: '/guide/faq' },
     ],
@@ -37,7 +37,7 @@ const zhSidebar = [
     ],
   },
   {
-    text: '�?Agent 系统',
+    text: '多 Agent 系统',
     collapsed: false,
     items: [
       { text: '概览', link: '/agent/' },
@@ -80,18 +80,18 @@ const zhSidebar = [
     ],
   },
   {
-    text: '桌面�?,
+    text: '桌面端',
     collapsed: false,
     items: [
       { text: '概览', link: '/desktop/' },
-      { text: '快速上�?, link: '/desktop/01-quick-start' },
+      { text: '快速上手', link: '/desktop/01-quick-start' },
       { text: '架构设计', link: '/desktop/02-architecture' },
       { text: '功能详解', link: '/desktop/03-features' },
-      { text: '安装与构�?, link: '/desktop/04-installation' },
+      { text: '安装与构建', link: '/desktop/04-installation' },
     ],
   },
   {
-    text: '参�?,
+    text: '参考',
     collapsed: true,
     items: [
       { text: '源码修复记录', link: '/reference/fixes' },
@@ -177,8 +177,8 @@ const enSidebar = [
 ]
 
 export default withMermaid(defineConfig({
-  title: 'Claude Code 咪咪',
-  description: '基于 Claude Code 泄露源码修复的本地可运行版本，支持接入任�?Anthropic 兼容 API',
+  title: 'Claude Code Haha',
+  description: '基于 Claude Code 泄露源码修复的本地可运行版本，支持接入任意 Anthropic 兼容 API',
   lastUpdated: true,
   base: '/',
 
@@ -200,7 +200,7 @@ export default withMermaid(defineConfig({
       themeConfig: {
         nav: [
           { text: '首页', link: '/' },
-          { text: '快速开�?, link: '/guide/quick-start' },
+          { text: '快速开始', link: '/guide/quick-start' },
         ],
         sidebar: zhSidebar,
         outline: { label: '页面导航' },
@@ -208,7 +208,7 @@ export default withMermaid(defineConfig({
         sidebarMenuLabel: '菜单',
         darkModeSwitchLabel: '主题',
         lastUpdated: { text: '最后更新于' },
-        docFooter: { prev: '上一�?, next: '下一�? },
+        docFooter: { prev: '上一页', next: '下一页' },
       },
     },
     en: {
@@ -217,7 +217,7 @@ export default withMermaid(defineConfig({
       description: 'A locally runnable version repaired from the leaked Claude Code source, with support for any Anthropic-compatible API endpoint.',
       themeConfig: {
         editLink: {
-          pattern: 'https://github.com/miniongk/mimicc/edit/main/docs/:path',
+          pattern: 'https://github.com/NanmiCoder/cc-haha/edit/main/docs/:path',
           text: 'Edit this page on GitHub',
         },
         nav: [
@@ -231,20 +231,18 @@ export default withMermaid(defineConfig({
 
   themeConfig: {
     editLink: {
-      pattern: 'https://github.com/miniongk/mimicc/edit/main/docs/:path',
-      text: '�?GitHub 上编辑此�?,
+      pattern: 'https://github.com/NanmiCoder/cc-haha/edit/main/docs/:path',
+      text: '在 GitHub 上编辑此页',
     },
     search: {
       provider: 'local',
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/miniongk/mimicc' },
+      { icon: 'github', link: 'https://github.com/NanmiCoder/cc-haha' },
     ],
     footer: {
       message: 'Released under the MIT License.',
-      copyright: 'Copyright 2026 Claude Code 咪咪 Contributors',
+      copyright: 'Copyright 2026 Claude Code Haha Contributors',
     },
   },
 }))
-
-

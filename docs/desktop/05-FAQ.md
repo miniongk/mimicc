@@ -1,4 +1,4 @@
-﻿# Desktop 常见问题 (FAQ)
+# Desktop 常见问题 (FAQ)
 
 ## 使用自定义 Provider（如 Kimi）时，Web UI 提示 "401 API Key invalid" 怎么办？
 
@@ -10,7 +10,7 @@ Error: Failed to authenticate. API Error: 401
 ```
 
 ### 根因
-服务器曾将 Provider 的 API Key 以 `ANTHROPIC_AUTH_TOKEN` 的形式写入 `~/.claude/mimicc/settings.json`，但 Anthropic SDK 对这两个环境变量的处理不同：
+服务器曾将 Provider 的 API Key 以 `ANTHROPIC_AUTH_TOKEN` 的形式写入 `~/.claude/cc-haha/settings.json`，但 Anthropic SDK 对这两个环境变量的处理不同：
 
 - `ANTHROPIC_AUTH_TOKEN` → 作为 `Authorization: Bearer <token>` 发送
 - `ANTHROPIC_API_KEY` → 作为 `x-api-key` 发送
@@ -26,10 +26,10 @@ Error: Failed to authenticate. API Error: 401
 - 修改 `syncToSettings()`，对于直连（非代理）Provider，写入 `ANTHROPIC_API_KEY` 而不是 `ANTHROPIC_AUTH_TOKEN`
 
 #### 2. 修复子进程环境变量注入 (`src/server/services/conversationService.ts`)
-- 在清理继承的环境变量后，服务器会读取 `~/.claude/mimicc/settings.json`，并将托管的 Provider 配置重新注入 CLI 子进程
+- 在清理继承的环境变量后，服务器会读取 `~/.claude/cc-haha/settings.json`，并将托管的 Provider 配置重新注入 CLI 子进程
 
 #### 3. 更新本地配置文件
-将 `~/.claude/mimicc/settings.json` 中的 `ANTHROPIC_AUTH_TOKEN` 替换为 `ANTHROPIC_API_KEY`：
+将 `~/.claude/cc-haha/settings.json` 中的 `ANTHROPIC_AUTH_TOKEN` 替换为 `ANTHROPIC_API_KEY`：
 
 **修改前：**
 ```json
@@ -54,4 +54,3 @@ Error: Failed to authenticate. API Error: 401
 ```
 
 修改完成后，重启服务器即可生效。
-

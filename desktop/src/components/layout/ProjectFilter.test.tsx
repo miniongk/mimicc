@@ -57,7 +57,7 @@ describe('ProjectFilter', () => {
           realPath: '/Users/nanmi/workspace/myself_code/claude-code-haha',
           projectName: 'claude-code-haha',
           isGit: true,
-          repoName: 'miniongk/cc-haha',
+          repoName: 'NanmiCoder/cc-haha',
           branch: 'main',
           modifiedAt: '2026-04-20T10:00:00.000Z',
           sessionCount: 4,
@@ -67,7 +67,7 @@ describe('ProjectFilter', () => {
           realPath: '/Users/nanmi/workspace/myself_code/OpenCutSkill',
           projectName: 'OpenCutSkill',
           isGit: true,
-          repoName: 'miniongk/OpenCutSkill',
+          repoName: 'NanmiCoder/OpenCutSkill',
           branch: 'main',
           modifiedAt: '2026-04-20T09:00:00.000Z',
           sessionCount: 2,
@@ -80,18 +80,17 @@ describe('ProjectFilter', () => {
     fireEvent.click(screen.getByRole('button', { name: /All projects/i }))
 
     await waitFor(() => {
-      expect(screen.getByText('miniongk/cc-haha')).toBeInTheDocument()
+      expect(screen.getByText('NanmiCoder/cc-haha')).toBeInTheDocument()
       expect(screen.getByText('/Users/nanmi/workspace/myself_code/claude-code-haha')).toBeInTheDocument()
-      expect(screen.getByText('miniongk/OpenCutSkill')).toBeInTheDocument()
+      expect(screen.getByText('NanmiCoder/OpenCutSkill')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /miniongk\/cc-haha/i }))
+    fireEvent.click(screen.getByRole('button', { name: /NanmiCoder\/cc-haha/i }))
 
     await waitFor(() => {
       expect(useSessionStore.getState().selectedProjects).toEqual(['Users-nanmi-workspace-myself_code-claude-code-haha'])
     })
 
-    expect(screen.getAllByRole('button', { name: /miniongk\/cc-haha/i })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /NanmiCoder\/cc-haha/i })).toHaveLength(2)
   })
 })
-

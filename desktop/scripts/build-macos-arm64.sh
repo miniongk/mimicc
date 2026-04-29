@@ -9,12 +9,12 @@ REPO_ROOT="$(cd "${DESKTOP_DIR}/.." && pwd)"
 TARGET_TRIPLE="aarch64-apple-darwin"
 TAURI_TARGET_DIR="${DESKTOP_DIR}/src-tauri/target"
 CANONICAL_OUTPUT_DIR="${DESKTOP_DIR}/build-artifacts/macos-arm64"
-APP_BUNDLE_NAME="Claude Code 咪咪.app"
+APP_BUNDLE_NAME="Claude Code Haha.app"
 APP_BUNDLE_ID="com.claude-code-haha.desktop"
 
 usage() {
   cat <<'EOF'
-Build Claude Code 咪咪 desktop for macOS Apple Silicon and output a DMG.
+Build Claude Code Haha desktop for macOS Apple Silicon and output a DMG.
 
 Usage:
   ./desktop/scripts/build-macos-arm64.sh [extra tauri build args...]
@@ -162,7 +162,7 @@ build_canonical_dmg() {
 
   # Create a read-write DMG first so we can customize the Finder layout
   hdiutil create \
-    -volname "Claude Code 咪咪" \
+    -volname "Claude Code Haha" \
     -srcfolder "${staging_dir}" \
     -ov \
     -format UDRW \
@@ -183,7 +183,7 @@ build_canonical_dmg() {
   # 所以这里允许 osascript 非零退出,只 warn,不让 set -e 炸掉整个脚本。
   if ! osascript <<APPLESCRIPT
 tell application "Finder"
-  tell disk "Claude Code 咪咪"
+  tell disk "Claude Code Haha"
     open
     set current view of container window to icon view
     set toolbar visible of container window to false
@@ -233,7 +233,7 @@ if [[ -n "${LATEST_APP}" ]]; then
   rm -f "${CANONICAL_OUTPUT_DIR}/"*.dmg
   build_canonical_dmg \
     "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}" \
-    "${CANONICAL_OUTPUT_DIR}/$(basename "${LATEST_DMG:-Claude Code 咪咪_0.1.0_aarch64.dmg}")"
+    "${CANONICAL_OUTPUT_DIR}/$(basename "${LATEST_DMG:-Claude Code Haha_0.1.0_aarch64.dmg}")"
 fi
 
 cat > "${CANONICAL_OUTPUT_DIR}/BUILD_INFO.txt" <<EOF
