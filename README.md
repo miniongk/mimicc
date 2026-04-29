@@ -37,7 +37,7 @@
 - **Channel 系统**（通过 Telegram/飞书/Discord 等 IM 远程控制 Agent）— [架构解析](docs/channel/01-channel-system.md)
 - **Computer Use 桌面控制** — [功能指南](docs/features/computer-use.md) | [架构解析](docs/features/computer-use-architecture.md)
 - **桌面端**（Tauri 2 + React 图形化客户端，多标签多会话）— [文档](docs/desktop/)
-- 降级 Recovery CLI 模式（`CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/claude-haha`）
+- 降级 Recovery CLI 模式（`CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/claude`）
 
 ---
 
@@ -201,49 +201,17 @@ http://127.0.0.1:2024
 | [Channel 系统](docs/channel/01-channel-system.md) | 通过 Telegram/飞书/Discord 等 IM 平台远程控制 Agent |
 | [Computer Use](docs/features/computer-use.md) | 桌面控制功能（截屏、鼠标、键盘）— [架构解析](docs/features/computer-use-architecture.md) |
 | [桌面端](docs/desktop/) | Tauri 2 + React 图形化客户端 — [快速上手](docs/desktop/01-quick-start.md) \| [架构设计](docs/desktop/02-architecture.md) \| [安装指南](docs/desktop/04-installation.md) |
-| [全局使用](docs/guide/global-usage.md) | 在任意目录启动 claude-haha |
+| [全局使用](docs/guide/global-usage.md) | 在任意目录启动 claude |
 | [常见问题](docs/guide/faq.md) | 常见错误排查 |
 | [源码修复记录](docs/reference/fixes.md) | 相对于原始泄露源码的修复内容 |
 | [项目结构](docs/reference/project-structure.md) | 代码目录结构说明 |
 
 ---
 
-## 赞助与合作
-
-本项目由个人利用业余时间维护，欢迎企业或个人赞助支持持续开发，也可洽谈定制、集成或商务合作。
-
-| 赞助商 | 介绍 |
-|------|------|
-| <a href="https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler"><img src="docs/images/sponsors/legionproxy-logo.svg" width="180" alt="LegionProxy"></a> | [LegionProxy](https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler) 住宅代理专为账号注册与自动化打造，提供 74M+ 真实住宅 IP、195+ 国家覆盖、HTTP/3 高速连接，$0.60/GB 起。 |
-
 📧 **联系邮箱**：miniongk@gmail.com
 
 ---
 
-## ☕ 请作者喝杯咖啡
-
-如果这个项目对您有帮助，欢迎打赏支持，您的每一份支持都是我持续更新的动力 ❤️
-
-<table>
-<tr>
-<td align="center" width="33%">
-<img src="docs/images/donate/wechat_pay.jpeg" width="250" alt="微信赞赏"><br>
-<b>微信赞赏</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/donate/zfb_pay.png" width="250" alt="支付宝"><br>
-<b>支付宝</b>
-</td>
-<td align="center" width="33%">
-<a href="https://buymeacoffee.com/relakkes" target="_blank">
-<img src="docs/images/donate/bmc_button.png" width="250" alt="Buy Me a Coffee">
-</a><br>
-<b>Buy Me a Coffee</b>
-</td>
-</tr>
-</table>
-
----
 
 ## Disclaimer
 
