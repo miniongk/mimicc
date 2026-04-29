@@ -13,7 +13,7 @@
 [![License](https://img.shields.io/github/license/miniongk/mimicc)](https://github.com/miniongk/mimicc/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-当前-blue)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README.en.md)
-[![Docs](https://img.shields.io/badge/📖_文档站点-Visit-D97757)](https://claudecode-haha.relakkesyang.org)
+[![Docs](https://img.shields.io/badge/📖_文档站点-Visit-D97757)](https://github.com/miniongk/mimicc)
 
 </div>
 
