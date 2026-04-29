@@ -1,16 +1,16 @@
-# Claude Code Haha
+# Claude Code 咪咪
 
 <p align="center">
-  <img src="docs/images/logo-horizontal.jpg" alt="Claude Code Haha" width="480">
+  <img src="docs/images/logo-horizontal.jpg" alt="Claude Code 咪咪" width="480">
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/pulls)
-[![License](https://img.shields.io/github/license/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/miniongk/mimicc?style=social)](https://github.com/miniongk/mimicc/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/miniongk/mimicc?style=social)](https://github.com/miniongk/mimicc/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/miniongk/mimicc)](https://github.com/miniongk/mimicc/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/miniongk/mimicc)](https://github.com/miniongk/mimicc/pulls)
+[![License](https://img.shields.io/github/license/miniongk/mimicc)](https://github.com/miniongk/mimicc/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-Available-green)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-当前-blue)](README.en.md)
 [![Docs](https://img.shields.io/badge/📖_Documentation-Visit-D97757)](https://claudecode-haha.relakkesyang.org)
@@ -63,7 +63,7 @@ A **locally runnable version** repaired from the leaked Claude Code source, with
 ## Desktop Preview
 
 <p align="center">
-  <a href="https://github.com/NanmiCoder/cc-haha/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows-D97757?style=for-the-badge" alt="Download Desktop"></a>
+  <a href="https://github.com/miniongk/mimicc/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows-D97757?style=for-the-badge" alt="Download Desktop"></a>
   &nbsp;
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_Install_Guide-Guide-gray?style=for-the-badge" alt="Install Guide"></a>
 </p>
@@ -135,7 +135,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 Add `bin/` to your PATH to run from any directory. See [Global Usage Guide](docs/en/guide/global-usage.md):
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/claude-code-mimicc/bin:$PATH"
 ```
 
 ### 5. Desktop Development
@@ -145,7 +145,7 @@ If you are developing or testing the `desktop/` frontend, start both the API ser
 #### 5.1 Start the API server
 
 ```bash
-cd /Users/nanmi/workspace/myself_code/claude-code-haha
+cd /Users/nanmi/workspace/myself_code/claude-code-mimicc
 SERVER_PORT=3456 bun run src/server/index.ts
 ```
 
@@ -158,7 +158,7 @@ curl http://127.0.0.1:3456/health
 #### 5.2 Start the desktop frontend
 
 ```bash
-cd /Users/nanmi/workspace/myself_code/claude-code-haha/desktop
+cd /Users/nanmi/workspace/myself_code/claude-code-mimicc/desktop
 bun run dev --host 127.0.0.1 --port 2024
 ```
 
@@ -216,7 +216,7 @@ This project is maintained in the author's spare time. Corporate or individual s
 |------|------|
 | <a href="https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler"><img src="docs/images/sponsors/legionproxy-logo.svg" width="180" alt="LegionProxy"></a> | [LegionProxy](https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler) provides residential proxies built for account registration and automation, with 74M+ real residential IPs, 195+ countries, HTTP/3 high-speed connections, starting at $0.60/GB. |
 
-📧 **Contact**: relakkes@gmail.com
+📧 **Contact**: miniongk@gmail.com
 
 ---
 

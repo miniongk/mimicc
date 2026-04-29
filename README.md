@@ -1,16 +1,16 @@
-# Claude Code Haha
+# Claude Code 咪咪
 
 <p align="center">
-  <img src="docs/images/app-icon.png" alt="Claude Code Haha" width="240">
+  <img src="docs/images/app-icon.png" alt="Claude Code 咪咪" width="240">
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/pulls)
-[![License](https://img.shields.io/github/license/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/miniongk/mimicc?style=social)](https://github.com/miniongk/mimicc/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/miniongk/mimicc?style=social)](https://github.com/miniongk/mimicc/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/miniongk/mimicc)](https://github.com/miniongk/mimicc/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/miniongk/mimicc)](https://github.com/miniongk/mimicc/pulls)
+[![License](https://img.shields.io/github/license/miniongk/mimicc)](https://github.com/miniongk/mimicc/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-当前-blue)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README.en.md)
 [![Docs](https://img.shields.io/badge/📖_文档站点-Visit-D97757)](https://claudecode-haha.relakkesyang.org)
@@ -63,7 +63,7 @@
 ## 桌面端预览
 
 <p align="center">
-  <a href="https://github.com/NanmiCoder/cc-haha/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows-D97757?style=for-the-badge" alt="下载桌面端"></a>
+  <a href="https://github.com/miniongk/mimicc/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows-D97757?style=for-the-badge" alt="下载桌面端"></a>
   &nbsp;
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_安装指南-Guide-gray?style=for-the-badge" alt="安装指南"></a>
 </p>
@@ -135,7 +135,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 将 `bin/` 加入 PATH 后可在任意目录启动，详见 [全局使用指南](docs/guide/global-usage.md)：
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/claude-code-mimicc/bin:$PATH"
 ```
 
 ### 5. 桌面端联调（Desktop）
@@ -145,7 +145,7 @@ export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
 #### 5.1 启动服务端
 
 ```bash
-cd /Users/nanmi/workspace/myself_code/claude-code-haha
+cd /Users/nanmi/workspace/myself_code/claude-code-mimicc
 SERVER_PORT=3456 bun run src/server/index.ts
 ```
 
@@ -158,7 +158,7 @@ curl http://127.0.0.1:3456/health
 #### 5.2 启动桌面前端
 
 ```bash
-cd /Users/nanmi/workspace/myself_code/claude-code-haha/desktop
+cd /Users/nanmi/workspace/myself_code/claude-code-mimicc/desktop
 bun run dev --host 127.0.0.1 --port 2024
 ```
 
@@ -216,7 +216,7 @@ http://127.0.0.1:2024
 |------|------|
 | <a href="https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler"><img src="docs/images/sponsors/legionproxy-logo.svg" width="180" alt="LegionProxy"></a> | [LegionProxy](https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler) 住宅代理专为账号注册与自动化打造，提供 74M+ 真实住宅 IP、195+ 国家覆盖、HTTP/3 高速连接，$0.60/GB 起。 |
 
-📧 **联系邮箱**：relakkes@gmail.com
+📧 **联系邮箱**：miniongk@gmail.com
 
 ---
 

@@ -52,7 +52,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 Add `bin/` to your PATH to run from any directory. See [Global Usage Guide](./global-usage.md):
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/claude-code-mimicc/bin:$PATH"
 ```
 
 ## 5. Recovery Mode

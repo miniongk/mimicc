@@ -9,10 +9,10 @@ Add to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
 # Option 1: Add to PATH (recommended)
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/claude-code-mimicc/bin:$PATH"
 
 # Option 2: Alias
-alias claude-haha="$HOME/path/to/claude-code-haha/bin/claude-haha"
+alias claude-haha="$HOME/path/to/claude-code-mimicc/bin/claude-haha"
 ```
 
 Then reload the config:
@@ -26,7 +26,7 @@ source ~/.bashrc  # or source ~/.zshrc
 Add to `~/.bashrc`:
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/claude-code-mimicc/bin:$PATH"
 ```
 
 ## Verify

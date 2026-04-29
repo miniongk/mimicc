@@ -52,7 +52,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 将 `bin/` 加入 PATH 后可在任意目录启动，详见 [全局使用指南](./global-usage.md)：
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/claude-code-mimicc/bin:$PATH"
 ```
 
 ## 5. 降级模式

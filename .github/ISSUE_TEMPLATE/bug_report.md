@@ -9,8 +9,8 @@ assignees: ''
 ## 🔍 问题检查清单  
 <!-- 请在提交 issue 前确认以下事项 -->  
 
-- [ ] 我已经仔细阅读了 [README 常见问题](https://github.com/NanmiCoder/cc-haha#常见问题) 部分
-- [ ] 我已经搜索并查看了[已关闭的 issues](https://github.com/NanmiCoder/cc-haha/issues?q=is%3Aissue+is%3Aclosed)  
+- [ ] 我已经仔细阅读了 [README 常见问题](https://github.com/miniongk/mimicc#常见问题) 部分
+- [ ] 我已经搜索并查看了[已关闭的 issues](https://github.com/miniongk/mimicc/issues?q=is%3Aissue+is%3Aclosed)  
 - [ ] 我确认这不是由于 API Key 配置错误、API 端点不兼容、Bun 版本过低等常见原因导致的问题  
 
 ## 🐛 问题描述  
