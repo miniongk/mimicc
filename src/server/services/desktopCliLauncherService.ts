@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+﻿import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
   chmod,
@@ -19,8 +19,8 @@ import { getShellConfigPaths } from '../../utils/shellConfig.js'
 import { getUserBinDir } from '../../utils/xdg.js'
 
 const DESKTOP_CLI_NAME = 'claude-haha'
-const PATH_BLOCK_START = '# >>> Claude Code Haha PATH >>>'
-const PATH_BLOCK_END = '# <<< Claude Code Haha PATH <<<'
+const PATH_BLOCK_START = '# >>> Claude Code 咪咪 PATH >>>'
+const PATH_BLOCK_END = '# <<< Claude Code 咪咪 PATH <<<'
 const WINDOWS_PATH_TARGET = 'Windows User PATH'
 const WINDOWS_USER_BIN_EXPR = '%USERPROFILE%\\.local\\bin'
 
@@ -474,3 +474,4 @@ function normalizeWindowsPathEntry(entry: string, homeDir: string) {
     .replace(/\\+$/, '')
     .toLowerCase()
 }
+

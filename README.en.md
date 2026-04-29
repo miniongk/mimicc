@@ -1,16 +1,16 @@
-# Claude Code Haha
+# Claude Code 咪咪
 
 <p align="center">
-  <img src="docs/images/logo-horizontal.jpg" alt="Claude Code Haha" width="480">
+  <img src="docs/images/logo-horizontal.jpg" alt="Claude Code 咪咪" width="480">
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/pulls)
-[![License](https://img.shields.io/github/license/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/miniongk/mimicc?style=social)](https://github.com/miniongk/mimicc/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/miniongk/mimicc?style=social)](https://github.com/miniongk/mimicc/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/miniongk/mimicc)](https://github.com/miniongk/mimicc/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/miniongk/mimicc)](https://github.com/miniongk/mimicc/pulls)
+[![License](https://img.shields.io/github/license/miniongk/mimicc)](https://github.com/miniongk/mimicc/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-Available-green)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-当前-blue)](README.en.md)
 [![Docs](https://img.shields.io/badge/📖_Documentation-Visit-D97757)](https://claudecode-haha.relakkesyang.org)
@@ -31,12 +31,12 @@ A **locally runnable version** repaired from the leaked Claude Code source, with
 - `--print` headless mode for scripts and CI
 - MCP server, plugin, and Skills support
 - Custom API endpoint and model support ([Third-Party Models Guide](docs/en/guide/third-party-models.md))
-- **Memory System** (cross-session persistent memory) — [Usage Guide](docs/memory/01-usage-guide.md)
-- **Multi-Agent System** (agent orchestration, parallel tasks, Teams collaboration) — [Usage Guide](docs/agent/01-usage-guide.md) | [Implementation](docs/agent/02-implementation.md)
-- **Skills System** (extensible capability plugins, custom workflows) — [Usage Guide](docs/skills/01-usage-guide.md) | [Implementation](docs/skills/02-implementation.md)
-- **Channel System** (remote Agent control via Telegram/Feishu/Discord IM platforms) — [Architecture](docs/en/channel/01-channel-system.md)
-- **Computer Use desktop control** — [Guide](docs/en/features/computer-use.md) | [Architecture](docs/en/features/computer-use-architecture.md)
-- **Desktop App** (Tauri 2 + React GUI client, multi-tab multi-session) — [Docs](docs/desktop/)
+- **Memory System** (cross-session persistent memory) �?[Usage Guide](docs/memory/01-usage-guide.md)
+- **Multi-Agent System** (agent orchestration, parallel tasks, Teams collaboration) �?[Usage Guide](docs/agent/01-usage-guide.md) | [Implementation](docs/agent/02-implementation.md)
+- **Skills System** (extensible capability plugins, custom workflows) �?[Usage Guide](docs/skills/01-usage-guide.md) | [Implementation](docs/skills/02-implementation.md)
+- **Channel System** (remote Agent control via Telegram/Feishu/Discord IM platforms) �?[Architecture](docs/en/channel/01-channel-system.md)
+- **Computer Use desktop control** �?[Guide](docs/en/features/computer-use.md) | [Architecture](docs/en/features/computer-use-architecture.md)
+- **Desktop App** (Tauri 2 + React GUI client, multi-tab multi-session) �?[Docs](docs/desktop/)
 - Fallback Recovery CLI mode (`CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/claude-haha`)
 
 ---
@@ -63,7 +63,7 @@ A **locally runnable version** repaired from the leaked Claude Code source, with
 ## Desktop Preview
 
 <p align="center">
-  <a href="https://github.com/NanmiCoder/cc-haha/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows-D97757?style=for-the-badge" alt="Download Desktop"></a>
+  <a href="https://github.com/miniongk/mimicc/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows-D97757?style=for-the-badge" alt="Download Desktop"></a>
   &nbsp;
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_Install_Guide-Guide-gray?style=for-the-badge" alt="Install Guide"></a>
 </p>
@@ -105,7 +105,7 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 ```bash
 bun install
 cp .env.example .env
-# Edit .env with your API key — see docs/en/guide/env-vars.md for details
+# Edit .env with your API key �?see docs/en/guide/env-vars.md for details
 ```
 
 ### 3. Start
@@ -123,7 +123,7 @@ cp .env.example .env
 > **Prerequisite**: [Git for Windows](https://git-scm.com/download/win) must be installed.
 
 ```powershell
-# PowerShell / cmd — call Bun directly
+# PowerShell / cmd �?call Bun directly
 bun --env-file=.env ./src/entrypoints/cli.tsx
 
 # Or run inside Git Bash
@@ -199,8 +199,8 @@ http://127.0.0.1:2024
 | [Multi-Agent System](docs/agent/01-usage-guide.md) | Agent orchestration, parallel tasks and Teams collaboration |
 | [Skills System](docs/skills/01-usage-guide.md) | Extensible capability plugins, custom workflows and conditional activation |
 | [Channel System](docs/en/channel/01-channel-system.md) | Remote Agent control via Telegram/Feishu/Discord IM platforms |
-| [Computer Use](docs/en/features/computer-use.md) | Desktop control (screenshots, mouse, keyboard) — [Architecture](docs/en/features/computer-use-architecture.md) |
-| [Desktop App](docs/desktop/) | Tauri 2 + React GUI client — [Quick Start](docs/desktop/01-quick-start.md) \| [Architecture](docs/desktop/02-architecture.md) \| [Installation](docs/desktop/04-installation.md) |
+| [Computer Use](docs/en/features/computer-use.md) | Desktop control (screenshots, mouse, keyboard) �?[Architecture](docs/en/features/computer-use-architecture.md) |
+| [Desktop App](docs/desktop/) | Tauri 2 + React GUI client �?[Quick Start](docs/desktop/01-quick-start.md) \| [Architecture](docs/desktop/02-architecture.md) \| [Installation](docs/desktop/04-installation.md) |
 | [Global Usage](docs/en/guide/global-usage.md) | Run claude-haha from any directory |
 | [FAQ](docs/en/guide/faq.md) | Common error troubleshooting |
 | [Source Fixes](docs/en/reference/fixes.md) | Fixes compared with the original leaked source |
@@ -220,9 +220,9 @@ This project is maintained in the author's spare time. Corporate or individual s
 
 ---
 
-## ☕ Buy Me a Coffee
+## �?Buy Me a Coffee
 
-If this project helps you, consider buying me a coffee — every bit of support keeps this project going ❤️
+If this project helps you, consider buying me a coffee �?every bit of support keeps this project going ❤️
 
 <table>
 <tr>
@@ -248,3 +248,4 @@ If this project helps you, consider buying me a coffee — every bit of support 
 ## Disclaimer
 
 This repository is based on the Claude Code source leaked from the Anthropic npm registry on 2026-03-31. All original source code copyrights belong to [Anthropic](https://www.anthropic.com). It is provided for learning and research purposes only.
+

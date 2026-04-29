@@ -1,4 +1,4 @@
-# Claude Code Channel System Documentation
+﻿# Claude Code Channel System Documentation
 
 > Complete technical analysis of remote Agent control via IM platforms
 
@@ -6,14 +6,14 @@
 
 ## Documentation
 
-### [01-channel-system.md](./01-channel-system.md) — Channel System Architecture
+### [01-channel-system.md](./01-channel-system.md) �?Channel System Architecture
 
 A deep dive into the design and implementation of Claude Code's Channel system from a source code perspective, covering:
 
 - **What is a Channel**: Core concepts of IM integration, MCP protocol foundations
 - **Architecture Overview**: End-to-end message flow, component relationships
 - **Message Protocol**: Inbound notifications, XML wrapping, outbound tool calls
-- **Six-Layer Access Control**: Capability → Runtime gate → OAuth → Org policy → Session allowlist → Plugin approval
+- **Six-Layer Access Control**: Capability �?Runtime gate �?OAuth �?Org policy �?Session allowlist �?Plugin approval
 - **Permission Relay System**: Remote tool execution approval, 5-letter request IDs, multi-source racing
 - **Plugin Architecture**: Channel manifest declarations, user config flow, scoped naming
 - **UI Components**: Terminal message rendering, status notices, developer warning dialogs
@@ -30,7 +30,7 @@ All illustrations use dark background (#1a1a2e) with Anthropic brand copper-oran
 | Image | Description | Document |
 |-------|-------------|----------|
 | `01-channel-overview.png` | Channel system architecture overview | Architecture |
-| `02-message-flow.png` | End-to-end message flow: IM → Agent → IM | Architecture |
+| `02-message-flow.png` | End-to-end message flow: IM �?Agent �?IM | Architecture |
 | `03-access-control.png` | Six-layer access control gates | Architecture |
 | `04-permission-relay.png` | Permission relay system flow | Architecture |
 
@@ -50,11 +50,11 @@ All illustrations use dark background (#1a1a2e) with Anthropic brand copper-oran
 2. Understand the `plugin.json` Channel declaration format
 3. Implement the MCP Server `notifications/claude/channel` protocol
 4. Key source files:
-   - `src/services/mcp/channelNotification.ts` — Core gating and message wrapping
-   - `src/services/mcp/channelPermissions.ts` — Permission relay system
-   - `src/services/mcp/channelAllowlist.ts` — Allowlist management
-   - `src/utils/plugins/mcpPluginIntegration.ts` — Plugin MCP integration
-   - `src/utils/plugins/schemas.ts` — Plugin manifest Channel schema
+   - `src/services/mcp/channelNotification.ts` �?Core gating and message wrapping
+   - `src/services/mcp/channelPermissions.ts` �?Permission relay system
+   - `src/services/mcp/channelAllowlist.ts` �?Allowlist management
+   - `src/utils/plugins/mcpPluginIntegration.ts` �?Plugin MCP integration
+   - `src/utils/plugins/schemas.ts` �?Plugin manifest Channel schema
 
 ---
 
@@ -77,7 +77,9 @@ All illustrations use dark background (#1a1a2e) with Anthropic brand copper-oran
 
 ## Related Resources
 
-- [Claude Code Haha Home](/en/)
+- [Claude Code 咪咪 Home](/en/)
 - [Agent Framework Deep Dive](/en/agent/03-agent-framework)
 - [Skills System Documentation](/en/skills/01-usage-guide)
-- [GitHub Issues](https://github.com/NanmiCoder/cc-haha/issues)
+- [GitHub Issues](https://github.com/miniongk/mimicc/issues)
+
+

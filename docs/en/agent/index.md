@@ -1,4 +1,4 @@
-# Claude Code Multi-Agent System Documentation
+﻿# Claude Code Multi-Agent System Documentation
 
 > Complete guide and technical reference for multi-agent orchestration
 
@@ -6,7 +6,7 @@
 
 ## Documentation Index
 
-### [01-usage-guide.md](./01-usage-guide.md) — Usage Guide
+### [01-usage-guide.md](./01-usage-guide.md) �?Usage Guide
 
 A comprehensive user-facing manual covering:
 
@@ -21,7 +21,7 @@ A comprehensive user-facing manual covering:
 
 ---
 
-### [02-implementation.md](./02-implementation.md) — Implementation Details
+### [02-implementation.md](./02-implementation.md) �?Implementation Details
 
 A deep technical reference for developers covering:
 
@@ -38,7 +38,7 @@ A deep technical reference for developers covering:
 
 ---
 
-### [03-agent-framework.md](./03-agent-framework.md) — Agent Framework Deep Dive
+### [03-agent-framework.md](./03-agent-framework.md) �?Agent Framework Deep Dive
 
 Deconstructing the architecture behind Claude Code's agent framework from source code, covering:
 
@@ -62,20 +62,20 @@ All diagrams use a dark background (#1a1a2e) with Anthropic brand copper-orange 
 
 | Image | Description | Document |
 |-------|-------------|----------|
-| `01-agent-overview.png` | Multi-Agent System Overview — Architecture panorama | Usage Guide |
-| `02-agent-types.png` | Six Built-in Agents — Type comparison matrix | Usage Guide |
-| `03-spawn-flow.png` | Agent Spawn Flow — Four-path decision tree | Usage Guide |
-| `04-agent-teams.png` | Agent Teams Collaboration — Team communication topology | Usage Guide |
-| `05-architecture.png` | Implementation Architecture — Core module relationships | Implementation |
-| `06-context-passing.png` | Context Passing — CacheSafeParams data flow | Implementation |
-| `07-tool-pool.png` | Tool Pool System — Three-layer filtering pipeline | Implementation |
-| `08-background-task.png` | Background Task Engine — Lifecycle state machine | Implementation |
-| `09-teams-mailbox.png` | Teams Mailbox System — Message routing topology | Implementation |
-| `10-fork-cache.png` | Fork Cache Optimization — Byte-level consistent sharing | Implementation |
-| `11-agent-framework-overview.png` | Agent Framework Overview — Core component relationships | Framework Deep Dive |
-| `12-agent-core-loop.png` | Core Agent Loop — Five-phase state machine | Framework Deep Dive |
-| `13-system-prompt-pipeline.png` | System Prompt Pipeline — Layered cache pipeline | Framework Deep Dive |
-| `14-context-compression.png` | Context Compression — Four-level progressive strategy | Framework Deep Dive |
+| `01-agent-overview.png` | Multi-Agent System Overview �?Architecture panorama | Usage Guide |
+| `02-agent-types.png` | Six Built-in Agents �?Type comparison matrix | Usage Guide |
+| `03-spawn-flow.png` | Agent Spawn Flow �?Four-path decision tree | Usage Guide |
+| `04-agent-teams.png` | Agent Teams Collaboration �?Team communication topology | Usage Guide |
+| `05-architecture.png` | Implementation Architecture �?Core module relationships | Implementation |
+| `06-context-passing.png` | Context Passing �?CacheSafeParams data flow | Implementation |
+| `07-tool-pool.png` | Tool Pool System �?Three-layer filtering pipeline | Implementation |
+| `08-background-task.png` | Background Task Engine �?Lifecycle state machine | Implementation |
+| `09-teams-mailbox.png` | Teams Mailbox System �?Message routing topology | Implementation |
+| `10-fork-cache.png` | Fork Cache Optimization �?Byte-level consistent sharing | Implementation |
+| `11-agent-framework-overview.png` | Agent Framework Overview �?Core component relationships | Framework Deep Dive |
+| `12-agent-core-loop.png` | Core Agent Loop �?Five-phase state machine | Framework Deep Dive |
+| `13-system-prompt-pipeline.png` | System Prompt Pipeline �?Layered cache pipeline | Framework Deep Dive |
+| `14-context-compression.png` | Context Compression �?Four-level progressive strategy | Framework Deep Dive |
 
 ---
 
@@ -92,12 +92,12 @@ All diagrams use a dark background (#1a1a2e) with Anthropic brand copper-orange 
 
 1. Read the [Implementation Details](./02-implementation.md)
 2. Browse the source code:
-   - `src/tools/AgentTool/` — Agent tool implementation
-   - `src/tools/TeamCreateTool/` — Team creation
-   - `src/tools/SendMessageTool/` — Inter-agent communication
-   - `src/utils/swarm/` — Swarm collaboration infrastructure
-   - `src/utils/forkedAgent.ts` — Fork agent context
-   - `src/tasks/` — Task management system
+   - `src/tools/AgentTool/` �?Agent tool implementation
+   - `src/tools/TeamCreateTool/` �?Team creation
+   - `src/tools/SendMessageTool/` �?Inter-agent communication
+   - `src/utils/swarm/` �?Swarm collaboration infrastructure
+   - `src/utils/forkedAgent.ts` �?Fork agent context
+   - `src/tasks/` �?Task management system
 3. Understand the four spawn paths and context passing mechanisms
 
 ---
@@ -106,7 +106,7 @@ All diagrams use a dark background (#1a1a2e) with Anthropic brand copper-orange 
 
 | Concept | Description |
 |---------|-------------|
-| **Agent Tool** | Primary entry point — accepts a prompt + subagent_type to spawn a subagent |
+| **Agent Tool** | Primary entry point �?accepts a prompt + subagent_type to spawn a subagent |
 | **Subagent** | An independent child agent that executes tasks with its own tool pool and permissions |
 | **Fork Agent** | A forked agent that inherits the parent's full context and shares prompt cache |
 | **Teammate** | A collaborative member within an Agent Team, communicating via mailbox |
@@ -121,9 +121,11 @@ All diagrams use a dark background (#1a1a2e) with Anthropic brand copper-orange 
 
 ## Related Resources
 
-- [Claude Code Haha Home](/)
+- [Claude Code 咪咪 Home](/)
 - [Memory System Documentation](/en/memory/01-usage-guide)
-- [Agent Tool Source Code](https://github.com/NanmiCoder/cc-haha/tree/main/src/tools/AgentTool/)
-- [Swarm Infrastructure](https://github.com/NanmiCoder/cc-haha/tree/main/src/utils/swarm/)
-- [Task Management System](https://github.com/NanmiCoder/cc-haha/tree/main/src/tasks/)
-- [GitHub Issues](https://github.com/NanmiCoder/cc-haha/issues)
+- [Agent Tool Source Code](https://github.com/miniongk/mimicc/tree/main/src/tools/AgentTool/)
+- [Swarm Infrastructure](https://github.com/miniongk/mimicc/tree/main/src/utils/swarm/)
+- [Task Management System](https://github.com/miniongk/mimicc/tree/main/src/tasks/)
+- [GitHub Issues](https://github.com/miniongk/mimicc/issues)
+
+

@@ -1,20 +1,20 @@
----
+﻿---
 layout: home
 
 hero:
-  name: Claude Code Haha
+  name: Claude Code 咪咪
   text: Locally Runnable Claude Code
   tagline: Repaired from leaked source, supports any Anthropic-compatible API endpoint (MiniMax, OpenRouter, etc.)
   image:
     src: /images/logo-horizontal.png
-    alt: Claude Code Haha
+    alt: Claude Code 咪咪
   actions:
     - theme: brand
       text: Quick Start
       link: /en/guide/quick-start
     - theme: alt
       text: GitHub
-      link: https://github.com/NanmiCoder/cc-haha
+      link: https://github.com/miniongk/mimicc
 
 features:
   - icon: "\U0001F5A5"
@@ -31,10 +31,12 @@ features:
     details: Extensible capability plugins, custom workflows, conditional activation
   - icon: "\U0001F4BB"
     title: Computer Use
-    details: Desktop control — screenshots, mouse, and keyboard automation
+    details: Desktop control �?screenshots, mouse, and keyboard automation
     link: /en/features/computer-use
   - icon: "\U0001F310"
     title: Third-Party Models
     details: Support for OpenAI, DeepSeek, Ollama, and any compatible model
     link: /en/guide/third-party-models
 ---
+
+

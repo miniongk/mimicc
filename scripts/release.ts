@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+﻿#!/usr/bin/env bun
 /**
- * Release script for Claude Code Haha Desktop
+ * Release script for Claude Code 咪咪 Desktop
  *
  * Usage:
  *   bun run scripts/release.ts patch       # 0.1.0 → 0.1.1
@@ -142,3 +142,4 @@ await run(['git', 'tag', '-a', `v${next}`, '-m', `Release v${next}`])
 
 console.log(`\n  Done! Created commit and tag v${next}`)
 console.log(`\n  To trigger the build:\n    git push origin main --tags\n`)
+
