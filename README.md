@@ -201,7 +201,7 @@ http://127.0.0.1:2024
 | [Channel 系统](docs/channel/01-channel-system.md) | 通过 Telegram/飞书/Discord 等 IM 平台远程控制 Agent |
 | [Computer Use](docs/features/computer-use.md) | 桌面控制功能（截屏、鼠标、键盘）— [架构解析](docs/features/computer-use-architecture.md) |
 | [桌面端](docs/desktop/) | Tauri 2 + React 图形化客户端 — [快速上手](docs/desktop/01-quick-start.md) \| [架构设计](docs/desktop/02-architecture.md) \| [安装指南](docs/desktop/04-installation.md) |
-| [全局使用](docs/guide/global-usage.md) | 在任意目录启动 claude-haha |
+| [全局使用](docs/guide/global-usage.md) | 在任意目录启动 claude |
 | [常见问题](docs/guide/faq.md) | 常见错误排查 |
 | [源码修复记录](docs/reference/fixes.md) | 相对于原始泄露源码的修复内容 |
 | [项目结构](docs/reference/project-structure.md) | 代码目录结构说明 |
