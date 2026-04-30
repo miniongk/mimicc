@@ -1375,11 +1375,6 @@ function PluginSettings() {
 
 const GITHUB_REPO = 'https://github.com/miniongk/mimicc'
 const AUTHOR_GITHUB = 'https://github.com/miniongk'
-const SOCIAL_LINKS = [
-  { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/434377496', label: 'MinionGk' },
-  { name: 'Douyin', icon: '/icons/douyin.svg', url: 'https://www.douyin.com/user/MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE', label: 'MinionGk' },
-  { name: 'Xiaohongshu', icon: '/icons/xiaohongshu.svg', url: 'https://www.xiaohongshu.com/user/profile/5f58bd990000000001003753', label: 'MinionGk' },
-] as const
 
 function AboutSettings() {
   const t = useTranslation()
@@ -1589,30 +1584,16 @@ function AboutSettings() {
         </button>
       </div>
 
-      {/* Social Media */}
+      {/* Email */}
       <div className="w-full mt-4">
-        <h3 className="text-xs font-medium text-[var(--color-text-tertiary)] uppercase tracking-wider mb-3">{t('settings.about.socialMedia')}</h3>
-        <div className="flex flex-col gap-0.5">
-          {SOCIAL_LINKS.map((link) => (
-            <button
-              key={link.name}
-              onClick={() => openUrl(link.url)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
-            >
-              <img src={link.icon} alt={link.name} className="w-4 h-4 opacity-60" />
-              <span className="text-sm text-[var(--color-text-primary)]">{link.label}</span>
-              <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">{link.name}</span>
-            </button>
-          ))}
-          <button
-            onClick={() => openUrl('mailto:miniongk@gmail.com')}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[16px] opacity-60">mail</span>
-            <span className="text-sm text-[var(--color-text-primary)]">miniongk@gmail.com</span>
-            <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">Email</span>
-          </button>
-        </div>
+        <button
+          onClick={() => openUrl('mailto:miniongk@gmail.com')}
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-[16px] opacity-60">mail</span>
+          <span className="text-sm text-[var(--color-text-primary)]">miniongk@gmail.com</span>
+          <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">Email</span>
+        </button>
       </div>
     </div>
   )
