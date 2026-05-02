@@ -94,6 +94,7 @@ export const en = {
   'settings.tab.skills': 'Skills',
   'settings.tab.mcp': 'MCP',
   'settings.tab.plugins': 'Plugins',
+  'settings.tab.diagnostics': 'Diagnostics',
 
   // Settings > Terminal
   'settings.terminal.title': 'Terminal',
@@ -110,6 +111,34 @@ export const en = {
   'settings.terminal.status.error': 'Error',
   'settings.terminal.status.unavailable': 'Unavailable',
   'terminal.newTab': 'New Terminal',
+
+  // Settings > Diagnostics
+  'settings.diagnostics.title': 'Diagnostics',
+  'settings.diagnostics.description': 'Server and CLI runtime logs for debugging startup, provider, and session failures.',
+  'settings.diagnostics.refresh': 'Refresh',
+  'settings.diagnostics.totalSize': 'Log size',
+  'settings.diagnostics.events': 'Events',
+  'settings.diagnostics.recentErrors': '24h warnings',
+  'settings.diagnostics.retention': 'Retention',
+  'settings.diagnostics.retentionValue': '{days} days / {size}',
+  'settings.diagnostics.logDirectory': 'Log directory',
+  'settings.diagnostics.openDirectory': 'Open',
+  'settings.diagnostics.exportBundle': 'Export Bundle',
+  'settings.diagnostics.copySummary': 'Copy Error Summary',
+  'settings.diagnostics.clearLogs': 'Clear Logs',
+  'settings.diagnostics.recentEvents': 'Recent Events',
+  'settings.diagnostics.privacyNote': 'Exported diagnostics are sanitized and do not include chat content, file contents, full environment variables, or API keys.',
+  'settings.diagnostics.noEvents': 'No diagnostic events yet.',
+  'settings.diagnostics.noRecentErrors': 'No recent warnings or errors.',
+  'settings.diagnostics.loadFailed': 'Failed to load diagnostics.',
+  'settings.diagnostics.openFailed': 'Failed to open diagnostics directory.',
+  'settings.diagnostics.exportFailed': 'Failed to export diagnostics bundle.',
+  'settings.diagnostics.exported': 'Exported {file}',
+  'settings.diagnostics.summaryCopied': 'Error summary copied.',
+  'settings.diagnostics.copyFailed': 'Failed to copy error summary.',
+  'settings.diagnostics.confirmClear': 'Clear all local diagnostic logs and exported bundles?',
+  'settings.diagnostics.cleared': 'Diagnostics cleared.',
+  'settings.diagnostics.clearFailed': 'Failed to clear diagnostics.',
 
   // Settings > Claude Official Login
   'settings.claudeOfficialLogin.intro': 'Using official Claude models requires signing in to your Claude.ai account. Click the button below to open the official Claude login page in your browser; you\'ll be returned here after authorizing.',

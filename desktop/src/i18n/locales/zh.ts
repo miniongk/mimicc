@@ -96,6 +96,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.tab.skills': '技能',
   'settings.tab.mcp': 'MCP',
   'settings.tab.plugins': '插件',
+  'settings.tab.diagnostics': '诊断',
 
   // Settings > Terminal
   'settings.terminal.title': '终端',
@@ -112,6 +113,34 @@ export const zh: Record<TranslationKey, string> = {
   'settings.terminal.status.error': '错误',
   'settings.terminal.status.unavailable': '不可用',
   'terminal.newTab': '新建终端',
+
+  // Settings > Diagnostics
+  'settings.diagnostics.title': '诊断',
+  'settings.diagnostics.description': '记录服务端与 CLI 的启动、服务商、会话运行错误，便于复现和定位问题。',
+  'settings.diagnostics.refresh': '刷新',
+  'settings.diagnostics.totalSize': '日志大小',
+  'settings.diagnostics.events': '事件数',
+  'settings.diagnostics.recentErrors': '24h 警告',
+  'settings.diagnostics.retention': '保留策略',
+  'settings.diagnostics.retentionValue': '{days} 天 / {size}',
+  'settings.diagnostics.logDirectory': '日志目录',
+  'settings.diagnostics.openDirectory': '打开',
+  'settings.diagnostics.exportBundle': '导出诊断包',
+  'settings.diagnostics.copySummary': '复制错误摘要',
+  'settings.diagnostics.clearLogs': '清理日志',
+  'settings.diagnostics.recentEvents': '最近事件',
+  'settings.diagnostics.privacyNote': '导出的诊断包会脱敏，不包含聊天内容、文件内容、完整环境变量或 API Key。',
+  'settings.diagnostics.noEvents': '暂无诊断事件。',
+  'settings.diagnostics.noRecentErrors': '最近没有警告或错误。',
+  'settings.diagnostics.loadFailed': '加载诊断信息失败。',
+  'settings.diagnostics.openFailed': '打开诊断目录失败。',
+  'settings.diagnostics.exportFailed': '导出诊断包失败。',
+  'settings.diagnostics.exported': '已导出 {file}',
+  'settings.diagnostics.summaryCopied': '错误摘要已复制。',
+  'settings.diagnostics.copyFailed': '复制错误摘要失败。',
+  'settings.diagnostics.confirmClear': '确定清理所有本地诊断日志和已导出的诊断包？',
+  'settings.diagnostics.cleared': '诊断日志已清理。',
+  'settings.diagnostics.clearFailed': '清理诊断日志失败。',
 
   // Settings > Claude Official Login
   'settings.claudeOfficialLogin.intro': '使用官方 Claude 模型需要登录你的 Claude.ai 账号。点击下方按钮,浏览器会打开 Claude 官方登录页面,授权后自动回到这里。',

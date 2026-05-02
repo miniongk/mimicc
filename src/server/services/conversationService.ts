@@ -11,6 +11,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { sessionService } from './sessionService.js'
+import { diagnosticsService } from './diagnosticsService.js'
 import {
   buildClaudeCliArgs,
   resolveClaudeCliLauncher,
@@ -32,7 +33,11 @@ type SessionProcess = {
   sdkToken: string
   sdkSocket: { send(data: string): void } | null
   pendingOutbound: string[]
+  startupPending: boolean
+  startupExitCode: number | null
+  stdoutLines: string[]
   stderrLines: string[]
+  outputDrain: Promise<void>
   sdkMessages: any[]
   initMessage: any | null
   pendingPermissionRequests: Map<
@@ -153,10 +158,23 @@ export class ConversationService {
         cwd: workDir,
         env: childEnv,
         stdin: 'pipe',
-        stdout: 'ignore',  // CLI communicates via SDK WebSocket, not stdout
+        stdout: 'pipe',
         stderr: 'pipe',
       })
     } catch (spawnErr) {
+      void diagnosticsService.recordEvent({
+        type: 'cli_spawn_failed',
+        severity: 'error',
+        sessionId,
+        summary: spawnErr instanceof Error ? spawnErr.message : String(spawnErr),
+        details: {
+          workDir,
+          permissionMode: options?.permissionMode || 'default',
+          providerId: options?.providerId ?? null,
+          model: options?.model ?? null,
+          error: spawnErr,
+        },
+      })
       throw new ConversationStartupError(
         `Failed to spawn CLI in ${workDir}: ${
           spawnErr instanceof Error ? spawnErr.message : String(spawnErr)
@@ -173,17 +191,24 @@ export class ConversationService {
       sdkToken: this.getSdkTokenFromUrl(sdkUrl),
       sdkSocket: null,
       pendingOutbound: [],
+      startupPending: true,
+      startupExitCode: null,
+      stdoutLines: [],
       stderrLines: [],
+      outputDrain: Promise.resolve(),
       sdkMessages: [],
       initMessage: null,
       pendingPermissionRequests: new Map(),
     }
     this.sessions.set(sessionId, session)
 
-    this.readErrorStream(sessionId, proc)
+    session.outputDrain = Promise.all([
+      this.readProcessOutputStream(sessionId, proc.stdout, 'stdout'),
+      this.readProcessOutputStream(sessionId, proc.stderr, 'stderr'),
+    ]).then(() => undefined)
 
     proc.exited.then((code) => {
-      this.handleProcessExit(sessionId, proc, code)
+      void this.handleProcessExit(sessionId, proc, code)
     })
 
     const STARTUP_GRACE_MS = 3000
@@ -194,8 +219,10 @@ export class ConversationService {
       ),
     ])
 
-    if (earlyExitCode !== null) {
-      const startupError = this.buildStartupError(sessionId, earlyExitCode)
+    const startupExitCode = earlyExitCode ?? session.startupExitCode
+    if (startupExitCode !== null) {
+      await this.waitForProcessOutputDrain(session)
+      const startupError = this.buildStartupError(sessionId, startupExitCode)
       this.sessions.delete(sessionId)
 
       if (this.clearStaleLock(sessionId)) {
@@ -206,10 +233,29 @@ export class ConversationService {
       }
 
       console.error(
-        `[ConversationService] CLI exited with code ${earlyExitCode} for ${sessionId}: ${startupError.message}`,
+        `[ConversationService] CLI exited with code ${startupExitCode} for ${sessionId}: ${startupError.message}`,
       )
+      void diagnosticsService.recordEvent({
+        type: 'cli_start_failed',
+        severity: 'error',
+        sessionId,
+        summary: startupError.message,
+        details: {
+          code: startupError.code,
+          exitCode: startupExitCode,
+          retryable: startupError.retryable,
+          workDir,
+          permissionMode: options?.permissionMode || 'default',
+          providerId: options?.providerId ?? null,
+          model: options?.model ?? null,
+          capturedOutput: this.buildCapturedProcessOutputDetail(session),
+          sdkMessages: this.summarizeSdkMessages(session.sdkMessages),
+        },
+      })
       throw startupError
     }
+
+    session.startupPending = false
 
     if (shouldReplacePlaceholder || !launchInfo) {
       await sessionService.appendSessionMetadata(sessionId, {
@@ -483,13 +529,14 @@ export class ConversationService {
     return Array.from(this.sessions.keys())
   }
 
-  private async readErrorStream(
+  private async readProcessOutputStream(
     sessionId: string,
-    proc: ReturnType<typeof Bun.spawn>,
+    stream: ReadableStream | null | undefined,
+    streamName: 'stdout' | 'stderr',
   ): Promise<void> {
-    if (!proc.stderr) return
+    if (!stream) return
 
-    const reader = (proc.stderr as ReadableStream).getReader()
+    const reader = stream.getReader()
     const decoder = new TextDecoder()
 
     try {
@@ -506,18 +553,36 @@ export class ConversationService {
             .split('\n')
             .map((entry) => entry.trim())
             .filter(Boolean)) {
-            session.stderrLines.push(line)
-            if (session.stderrLines.length > 20) {
-              session.stderrLines.splice(0, 10)
+            const lines =
+              streamName === 'stderr' ? session.stderrLines : session.stdoutLines
+            lines.push(this.redactProcessOutput(line))
+            if (lines.length > 20) {
+              lines.splice(0, 10)
             }
           }
         }
 
-        console.error(`[CLI:${sessionId}] ${text.trim()}`)
+        const logLine = this.redactProcessOutput(text.trim())
+        if (streamName === 'stderr') {
+          console.error(`[CLI:${sessionId}:stderr] ${logLine}`)
+        } else {
+          console.log(`[CLI:${sessionId}:stdout] ${logLine}`)
+        }
       }
     } catch {
-      // stderr read failures should not kill the session
+      // Process output read failures should not kill the session.
     }
+  }
+
+  private async waitForProcessOutputDrain(
+    session: SessionProcess,
+    timeoutMs = 250,
+  ): Promise<void> {
+    const outputDrain = session.outputDrain ?? Promise.resolve()
+    await Promise.race([
+      outputDrain.catch(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+    ])
   }
 
   private sendSdkMessage(
@@ -536,18 +601,36 @@ export class ConversationService {
     return true
   }
 
-  private handleProcessExit(
+  private async handleProcessExit(
     sessionId: string,
     proc: SessionProcess['proc'],
     code: number,
-  ): void {
+  ): Promise<void> {
     console.log(
       `[ConversationService] CLI process for ${sessionId} exited with code ${code}`,
     )
 
     const activeSession = this.sessions.get(sessionId)
     if (activeSession?.proc === proc) {
+      if (activeSession.startupPending) {
+        activeSession.startupExitCode = code
+        return
+      }
+      await this.waitForProcessOutputDrain(activeSession)
       const exitError = this.buildRuntimeExitMessage(sessionId, code)
+      void diagnosticsService.recordEvent({
+        type: 'cli_runtime_exit',
+        severity: 'error',
+        sessionId,
+        summary: exitError,
+        details: {
+          exitCode: code,
+          workDir: activeSession.workDir,
+          permissionMode: activeSession.permissionMode,
+          capturedOutput: this.buildCapturedProcessOutputDetail(activeSession),
+          sdkMessages: this.summarizeSdkMessages(activeSession.sdkMessages),
+        },
+      })
       for (const cb of activeSession.outputCallbacks) {
         cb({
           type: 'result',
@@ -834,7 +917,7 @@ export class ConversationService {
     exitCode: number,
   ): ConversationStartupError {
     const session = this.sessions.get(sessionId)
-    const stderrText = session?.stderrLines.join('\n') ?? ''
+    const capturedOutput = this.buildCapturedProcessOutputDetail(session)
     const recentMessages = session?.sdkMessages ?? []
     const resultMessage = [...recentMessages]
       .reverse()
@@ -845,7 +928,7 @@ export class ConversationService {
     const detail =
       this.extractStartupDetail(resultMessage) ||
       this.extractStartupDetail(authStatus) ||
-      stderrText
+      capturedOutput
 
     if (
       /(not logged in|run \/login|sign in again|login required|unauthenticated|logged_out)/i.test(
@@ -870,7 +953,7 @@ export class ConversationService {
     return new ConversationStartupError(
       normalizedDetail
         ? `CLI exited during startup (code ${exitCode}): ${normalizedDetail}`
-        : `CLI exited during startup with code ${exitCode}.`,
+        : `CLI exited during startup with code ${exitCode}; no CLI stderr/stdout or SDK error payload was captured before exit.`,
       'CLI_START_FAILED',
       true,
     )
@@ -878,7 +961,7 @@ export class ConversationService {
 
   private buildRuntimeExitMessage(sessionId: string, exitCode: number): string {
     const session = this.sessions.get(sessionId)
-    const stderrText = session?.stderrLines.join('\n').trim() ?? ''
+    const capturedOutput = this.buildCapturedProcessOutputDetail(session)
     const recentMessages = session?.sdkMessages ?? []
     const resultMessage = [...recentMessages]
       .reverse()
@@ -889,11 +972,33 @@ export class ConversationService {
     const detail =
       this.extractStartupDetail(resultMessage) ||
       this.extractStartupDetail(authStatus) ||
-      stderrText
+      capturedOutput
 
     return detail
       ? `CLI process exited unexpectedly (code ${exitCode}): ${detail}`
-      : `CLI process exited unexpectedly with code ${exitCode}.`
+      : `CLI process exited unexpectedly with code ${exitCode}; no CLI stderr/stdout or SDK error payload was captured before exit.`
+  }
+
+  private buildCapturedProcessOutputDetail(
+    session: SessionProcess | undefined,
+  ): string {
+    if (!session) return ''
+
+    const stderrText = (session.stderrLines ?? []).join('\n').trim()
+    const stdoutText = (session.stdoutLines ?? []).join('\n').trim()
+
+    if (stderrText && stdoutText) {
+      return `stderr:\n${stderrText}\nstdout:\n${stdoutText}`
+    }
+
+    return stderrText || stdoutText
+  }
+
+  private redactProcessOutput(line: string): string {
+    return line
+      .replace(/(ANTHROPIC_(?:API_KEY|AUTH_TOKEN)\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+      .replace(/((?:api[_-]?key|auth[_-]?token|access[_-]?token)\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+      .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1[REDACTED]')
   }
 
   private extractStartupDetail(message: any): string {
@@ -910,6 +1015,22 @@ export class ConversationService {
     }
 
     return ''
+  }
+
+  private summarizeSdkMessages(messages: any[]): unknown[] {
+    return messages.slice(-10).map((message) => {
+      if (!message || typeof message !== 'object') {
+        return message
+      }
+      return {
+        type: message.type,
+        subtype: message.subtype,
+        is_error: message.is_error,
+        status: typeof message.status === 'string' ? message.status : undefined,
+        result: typeof message.result === 'string' ? message.result : undefined,
+        message: typeof message.message === 'string' ? message.message : undefined,
+      }
+    })
   }
 
   private buildUserContent(

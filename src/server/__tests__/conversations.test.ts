@@ -170,7 +170,7 @@ describe('ConversationService', () => {
     expect(() => svc.onOutput('no-such-session', () => {})).not.toThrow()
   })
 
-  it('should ignore stale process exits after a session restarts', () => {
+  it('should ignore stale process exits after a session restarts', async () => {
     const svc = new ConversationService()
     const oldProc = { pid: 1 } as any
     const newProc = { pid: 2 } as any
@@ -188,10 +188,10 @@ describe('ConversationService', () => {
       pendingPermissionRequests: new Map(),
     })
 
-    ;(svc as any).handleProcessExit('session-restart', oldProc, 143)
+    await (svc as any).handleProcessExit('session-restart', oldProc, 143)
     expect(svc.hasSession('session-restart')).toBe(true)
 
-    ;(svc as any).handleProcessExit('session-restart', newProc, 0)
+    await (svc as any).handleProcessExit('session-restart', newProc, 0)
     expect(svc.hasSession('session-restart')).toBe(false)
   })
 
@@ -426,6 +426,34 @@ describe('WebSocket Chat Integration', () => {
         delete process.env.MOCK_SDK_EXIT_AFTER_FIRST_USER_MS
       } else {
         process.env.MOCK_SDK_EXIT_AFTER_FIRST_USER_MS = previousDelay
+      }
+    }
+  }
+
+  async function withMockStartupStdoutExit<T>(
+    stdout: string,
+    exitDelayMs: number,
+    callback: () => Promise<T>,
+  ): Promise<T> {
+    const previousStdout = process.env.MOCK_SDK_STARTUP_STDOUT
+    const previousExitDelay = process.env.MOCK_SDK_EXIT_BEFORE_SDK_MS
+
+    process.env.MOCK_SDK_STARTUP_STDOUT = stdout
+    process.env.MOCK_SDK_EXIT_BEFORE_SDK_MS = String(exitDelayMs)
+
+    try {
+      return await callback()
+    } finally {
+      if (previousStdout === undefined) {
+        delete process.env.MOCK_SDK_STARTUP_STDOUT
+      } else {
+        process.env.MOCK_SDK_STARTUP_STDOUT = previousStdout
+      }
+
+      if (previousExitDelay === undefined) {
+        delete process.env.MOCK_SDK_EXIT_BEFORE_SDK_MS
+      } else {
+        process.env.MOCK_SDK_EXIT_BEFORE_SDK_MS = previousExitDelay
       }
     }
   }
@@ -857,6 +885,46 @@ describe('WebSocket Chat Integration', () => {
     expect(secondTurn.some((m) => m.type === 'error')).toBe(false)
   })
 
+  it('should keep a long desktop session alive in a /tmp project across engineering turns', async () => {
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-issue247-project-'))
+
+    try {
+      await fs.writeFile(
+        path.join(projectDir, 'package.json'),
+        JSON.stringify({ name: 'issue-247-repro', type: 'module' }, null, 2),
+      )
+      await fs.mkdir(path.join(projectDir, 'src'), { recursive: true })
+      await fs.writeFile(
+        path.join(projectDir, 'src', 'index.ts'),
+        'export function greet(name: string) { return `hello ${name}` }\n',
+      )
+
+      const createRes = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workDir: projectDir }),
+      })
+      expect(createRes.status).toBe(201)
+      const { sessionId } = await createRes.json() as { sessionId: string }
+
+      const prompts = [
+        'Inspect this TypeScript project and summarize what you see.',
+        'Plan a small change to add a farewell helper.',
+        'Implement the helper in src/index.ts.',
+        'Review whether the exported functions are easy to test.',
+        'Suggest the next regression test for this project.',
+      ]
+
+      for (const prompt of prompts) {
+        const messages = await runTurn(sessionId, prompt)
+        expect(messages.some((m) => m.type === 'error')).toBe(false)
+        expect(messages.some((m) => m.type === 'message_complete')).toBe(true)
+      }
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
   it('should clear a desktop session without sending /clear to the CLI turn loop', async () => {
     const createRes = await fetch(`${baseUrl}/api/sessions`, {
       method: 'POST',
@@ -935,6 +1003,25 @@ describe('WebSocket Chat Integration', () => {
     expect(error?.message).toContain('activeProviderId:')
     expect(error?.message).toContain('configuredProviders:')
   })
+
+  it('should include CLI stdout diagnostics when startup exits before SDK messages', async () => {
+    const sessionId = `chat-startup-stdout-${crypto.randomUUID()}`
+
+    const messages = await withMockStartupStdoutExit(
+      'provider rejected request: invalid model id',
+      25,
+      () => runTurn(sessionId, 'trigger startup stdout diagnostics', true),
+    )
+    const error = messages.find((msg) => msg.type === 'error')
+
+    expect(error).toMatchObject({
+      code: 'CLI_START_FAILED',
+    })
+    expect(error?.message).toContain(
+      'CLI exited during startup (code 1): provider rejected request: invalid model id',
+    )
+    expect(error?.message).toContain('Desktop service diagnostics:')
+  }, 10_000)
 
   it('should prewarm the CLI before the first user turn and reuse that process', async () => {
     const createRes = await fetch(`${baseUrl}/api/sessions`, {
