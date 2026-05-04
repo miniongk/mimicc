@@ -5,8 +5,20 @@ const notificationPluginMock = vi.hoisted(() => ({
   requestPermission: vi.fn(),
   sendNotification: vi.fn(),
 }))
+const requestUserAttentionMock = vi.hoisted(() => vi.fn())
+const windowApiMock = vi.hoisted(() => ({
+  requestUserAttention: requestUserAttentionMock,
+  getCurrentWindow: vi.fn(() => ({
+    requestUserAttention: requestUserAttentionMock,
+  })),
+  UserAttentionType: {
+    Critical: 1,
+    Informational: 2,
+  },
+}))
 
 vi.mock('@tauri-apps/plugin-notification', () => notificationPluginMock)
+vi.mock('@tauri-apps/api/window', () => windowApiMock)
 
 import {
   getDesktopNotificationPermission,
@@ -24,6 +36,8 @@ describe('desktopNotifications', () => {
     notificationPluginMock.isPermissionGranted.mockReset()
     notificationPluginMock.requestPermission.mockReset()
     notificationPluginMock.sendNotification.mockReset()
+    windowApiMock.getCurrentWindow.mockClear()
+    windowApiMock.requestUserAttention.mockReset()
     useSettingsStore.setState({ desktopNotificationsEnabled: true })
   })
 
@@ -108,6 +122,21 @@ describe('desktopNotifications', () => {
       title: 'Permission required',
       body: 'Approve command execution',
     })
+  })
+
+  it('requests OS-level window attention for blocking prompts', async () => {
+    const sender = vi.fn(async () => true)
+    setNativeNotificationSenderForTests(sender)
+
+    notifyDesktop({
+      requestAttention: true,
+      title: 'Permission required',
+      body: 'Approve command execution',
+    })
+
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(windowApiMock.requestUserAttention).toHaveBeenCalledTimes(1))
+    expect(windowApiMock.requestUserAttention).toHaveBeenCalledWith(windowApiMock.UserAttentionType.Critical)
   })
 
   it('throttles bursts within the same cooldown scope', async () => {

@@ -696,6 +696,7 @@ describe('chatStore history mapping', () => {
     expect(notifyDesktopMock).toHaveBeenCalledWith({
       dedupeKey: 'permission:perm-ask-1',
       cooldownScope: 'permission-prompt',
+      requestAttention: true,
       title: 'Claude Code Haha 需要你的确认',
       body: 'AskUserQuestion 请求执行，正在等待允许。',
     })
@@ -1009,6 +1010,7 @@ describe('chatStore history mapping', () => {
     expect(notifyDesktopMock).toHaveBeenCalledWith({
       dedupeKey: 'computer-use-permission:cu-1',
       cooldownScope: 'permission-prompt',
+      requestAttention: true,
       title: 'Claude Code Haha 需要你的确认',
       body: 'Open Finder and inspect a file',
     })

@@ -8,6 +8,7 @@ export type DesktopNotificationOptions = {
   dedupeKey?: string
   cooldownScope?: string
   cooldownMs?: number
+  requestAttention?: boolean
 }
 
 type NativeNotificationSender = (options: { title: string; body?: string }) => Promise<boolean> | boolean
@@ -108,6 +109,16 @@ async function sendNativeNotification(options: { title: string; body?: string })
   return true
 }
 
+async function requestWindowAttention(): Promise<boolean> {
+  try {
+    const { getCurrentWindow, UserAttentionType } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().requestUserAttention(UserAttentionType.Critical)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function notifyDesktop(options: DesktopNotificationOptions): void {
   if (!useSettingsStore.getState().desktopNotificationsEnabled) {
     return
@@ -129,6 +140,10 @@ export function notifyDesktop(options: DesktopNotificationOptions): void {
 
   if (options.dedupeKey) {
     notifiedKeys.add(options.dedupeKey)
+  }
+
+  if (options.requestAttention) {
+    void requestWindowAttention()
   }
 
   const sender = overrideNativeNotificationSender ?? sendNativeNotification

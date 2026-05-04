@@ -674,6 +674,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         notifyDesktop({
           dedupeKey: `permission:${msg.requestId}`,
           cooldownScope: 'permission-prompt',
+          requestAttention: true,
           title: 'Claude Code Haha 需要你的确认',
           body: msg.toolName
             ? `${msg.toolName} 请求执行，正在等待允许。`
@@ -710,6 +711,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         notifyDesktop({
           dedupeKey: `computer-use-permission:${msg.requestId}`,
           cooldownScope: 'permission-prompt',
+          requestAttention: true,
           title: 'Claude Code Haha 需要你的确认',
           body: msg.request.reason || 'Computer Use 正在等待允许。',
         })
