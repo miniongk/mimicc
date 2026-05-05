@@ -16,8 +16,9 @@ use std::{
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
+use tauri::menu::MenuBuilder;
 #[cfg(target_os = "macos")]
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Emitter;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, RunEvent, State, WindowEvent};
