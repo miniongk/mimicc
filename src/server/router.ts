@@ -18,7 +18,9 @@ import { handlePluginsApi } from './api/plugins.js'
 import { handleSkillsApi } from './api/skills.js'
 import { handleComputerUseApi } from './api/computer-use.js'
 import { handleHahaOAuthApi } from './api/haha-oauth.js'
+import { handleHahaOpenAIOAuthApi } from './api/haha-openai-oauth.js'
 import { handleMcpApi } from './api/mcp.js'
+import { handleDiagnosticsApi } from './api/diagnostics.js'
 
 export async function handleApiRequest(req: Request, url: URL): Promise<Response> {
   const path = url.pathname
@@ -72,6 +74,9 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
     case 'haha-oauth':
       return handleHahaOAuthApi(req, url, segments)
 
+    case 'haha-openai-oauth':
+      return handleHahaOpenAIOAuthApi(req, url, segments)
+
     case 'adapters':
       return handleAdaptersApi(req, url, segments)
 
@@ -86,6 +91,9 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
 
     case 'computer-use':
       return handleComputerUseApi(req, url, segments)
+
+    case 'diagnostics':
+      return handleDiagnosticsApi(req, url, segments)
 
     case 'filesystem':
       return handleFilesystemRoute(url.pathname, url)

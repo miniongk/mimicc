@@ -7,6 +7,7 @@ import { useCLITaskStore } from './cliTaskStore'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
 import { useTabStore } from './tabStore'
 import { randomSpinnerVerb } from '../config/spinnerVerbs'
+import { notifyDesktop } from '../lib/desktopNotifications'
 import { AGENT_LIFECYCLE_TYPES } from '../types/team'
 import type { MessageEntry } from '../types/session'
 import type { PermissionMode } from '../types/settings'
@@ -92,7 +93,7 @@ type ChatStore = {
     sessionId: string,
     content: string,
     attachments?: AttachmentRef[],
-    options?: { displayContent?: string },
+    options?: { displayContent?: string; displayAttachments?: AttachmentRef[] },
   ) => void
   respondToPermission: (
     sessionId: string,
@@ -123,6 +124,7 @@ type ChatStore = {
 
 const TASK_TOOL_NAMES = new Set(['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TodoWrite'])
 const pendingTaskToolUseIds = new Set<string>()
+const AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS = 160
 
 let msgCounter = 0
 const nextId = () => `msg-${++msgCounter}-${Date.now()}`
@@ -171,6 +173,34 @@ function appendAssistantTextMessage(
   ]
 }
 
+function normalizeNotificationPreview(content: string): string {
+  return content
+    .replace(/```[\s\S]*?```/g, ' code block ')
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[*_~>#-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function buildAgentCompletionNotification(
+  sessionId: string,
+  messages: UIMessage[],
+  text: string,
+): { title: string; body: string; dedupeKey: string } | null {
+  const preview = normalizeNotificationPreview(text)
+  if (!preview) return null
+
+  const lastAssistant = [...messages].reverse().find((message) => message.type === 'assistant_text')
+  const suffix = preview.length > AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS ? '...' : ''
+  return {
+    title: 'Claude Code 咪咪 已完成回复',
+    body: preview.slice(0, AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS) + suffix,
+    dedupeKey: `agent-completion:${sessionId}:${lastAssistant?.id ?? Date.now()}`,
+  }
+}
+
 /** Helper: immutably update a specific session within the sessions record */
 function updateSessionIn(
   sessions: Record<string, PerSessionState>,
@@ -183,11 +213,14 @@ function updateSessionIn(
 }
 
 async function fetchAndMapSessionHistory(sessionId: string) {
-  const { messages } = await sessionsApi.getMessages(sessionId)
+  const { messages, taskNotifications } = await sessionsApi.getMessages(sessionId)
   return {
     rawMessages: messages,
     uiMessages: mapHistoryMessagesToUiMessages(messages),
-    restoredNotifications: reconstructAgentNotifications(messages),
+    restoredNotifications: {
+      ...reconstructAgentNotifications(messages),
+      ...agentNotificationRecordFromList(taskNotifications ?? []),
+    },
     lastTodos: extractLastTodoWriteFromHistory(messages),
     hasMessagesAfterTaskCompletion: hasUserMessagesAfterTaskCompletion(messages),
   }
@@ -264,14 +297,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sendMessage: (sessionId, content, attachments, options) => {
     const userFacingContent =
       options?.displayContent?.trim() || content.trim()
+    const modelFacingContent = buildModelContent(content, attachments)
     const isMemberSession = !!useTeamStore.getState().getMemberBySessionId(sessionId)
+    const visibleAttachments = options?.displayAttachments ?? attachments
     const uiAttachments: UIAttachment[] | undefined =
-      attachments && attachments.length > 0
-        ? attachments.map((a) => ({
+      visibleAttachments && visibleAttachments.length > 0
+        ? visibleAttachments.map((a) => ({
             type: a.type,
             name: a.name || a.path || a.mimeType || a.type,
+            path: a.path,
             data: a.data,
             mimeType: a.mimeType,
+            lineStart: a.lineStart,
+            lineEnd: a.lineEnd,
+            note: a.note,
+            quote: a.quote,
           }))
         : undefined
 
@@ -309,6 +349,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         id: nextId(),
         type: 'user_text',
         content: userFacingContent,
+        ...(userFacingContent !== modelFacingContent ? { modelContent: modelFacingContent } : {}),
         attachments: isMemberSession ? undefined : uiAttachments,
         timestamp: Date.now(),
         ...(isMemberSession ? { pending: true } : {}),
@@ -659,6 +700,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
 
       case 'permission_request':
+        notifyDesktop({
+          dedupeKey: `permission:${msg.requestId}`,
+          cooldownScope: 'permission-prompt',
+          requestAttention: true,
+          title: 'Claude Code 咪咪 需要你的确认',
+          body: msg.toolName
+            ? `${msg.toolName} 请求执行，正在等待允许。`
+            : '有一个工具请求正在等待允许。',
+        })
         update((s) => ({
           pendingPermission: {
             requestId: msg.requestId,
@@ -687,6 +737,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
 
       case 'computer_use_permission_request':
+        notifyDesktop({
+          dedupeKey: `computer-use-permission:${msg.requestId}`,
+          cooldownScope: 'permission-prompt',
+          requestAttention: true,
+          title: 'Claude Code 咪咪 需要你的确认',
+          body: msg.request.reason || 'Computer Use 正在等待允许。',
+        })
         update(() => ({
           pendingComputerUsePermission: {
             requestId: msg.requestId,
@@ -701,10 +758,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'message_complete': {
         const session = get().sessions[sessionId]
         if (!session) break
+        const wasAgentRunning = session.chatState !== 'idle'
         const text = `${session.streamingText}${consumePendingDelta()}`
+        let completionMessages = session.messages
         if (text.trim()) {
-          update((s) => ({
-            messages: appendAssistantTextMessage(s.messages, text, Date.now()),
+          completionMessages = appendAssistantTextMessage(session.messages, text, Date.now())
+          update(() => ({
+            messages: completionMessages,
             streamingText: '',
           }))
         } else if (text !== session.streamingText) {
@@ -719,6 +779,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           pendingComputerUsePermission: null,
           elapsedTimer: null,
         }))
+        const notification = wasAgentRunning
+          ? buildAgentCompletionNotification(sessionId, completionMessages, text)
+          : null
+        if (notification) {
+          void notifyDesktop({
+            dedupeKey: notification.dedupeKey,
+            cooldownScope: 'agent-completion',
+            title: notification.title,
+            body: notification.body,
+          })
+        }
         break
       }
 
@@ -768,6 +839,45 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (msg.subtype === 'slash_commands' && Array.isArray(msg.data)) {
           update(() => ({ slashCommands: msg.data as Array<{ name: string; description: string }> }))
         }
+        if (msg.subtype === 'session_cleared') {
+          const session = get().sessions[sessionId]
+          if (session?.elapsedTimer) clearInterval(session.elapsedTimer)
+          update(() => ({
+            messages: [],
+            streamingText: '',
+            streamingToolInput: '',
+            activeToolUseId: null,
+            activeToolName: null,
+            activeThinkingId: null,
+            pendingPermission: null,
+            pendingComputerUsePermission: null,
+            chatState: 'idle',
+            elapsedTimer: null,
+            elapsedSeconds: 0,
+            statusVerb: '',
+            tokenUsage: { input_tokens: 0, output_tokens: 0 },
+            slashCommands: [],
+          }))
+          useCLITaskStore.getState().clearTasks()
+          useSessionStore.getState().updateSessionTitle(sessionId, 'New Session')
+          useTabStore.getState().updateTabTitle(sessionId, 'New Session')
+          useTabStore.getState().updateTabStatus(sessionId, 'idle')
+        }
+        if (msg.subtype === 'compact_boundary') {
+          update((session) => ({
+            messages: [
+              ...session.messages,
+              {
+                id: nextId(),
+                type: 'system',
+                content: typeof msg.message === 'string' && msg.message.trim()
+                  ? msg.message
+                  : 'Context compacted',
+                timestamp: Date.now(),
+              },
+            ],
+          }))
+        }
         if (msg.subtype === 'task_notification' && msg.data && typeof msg.data === 'object') {
           const data = msg.data as Record<string, unknown>
           const toolUseId =
@@ -816,6 +926,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 type AssistantHistoryBlock = { type: string; text?: string; thinking?: string; name?: string; id?: string; input?: unknown }
 type UserHistoryBlock = { type: string; text?: string; tool_use_id?: string; content?: unknown; is_error?: boolean; source?: { data?: string }; mimeType?: string; media_type?: string; name?: string }
 
+const TASK_NOTIFICATION_RE = /^<task-notification>\s*[\s\S]*<\/task-notification>$/i
+
 /**
  * Check if text is a teammate-message (internal agent-to-agent communication).
  * Uses full open+close tag match to avoid false positives on user text
@@ -823,6 +935,82 @@ type UserHistoryBlock = { type: string; text?: string; tool_use_id?: string; con
  */
 function isTeammateMessage(text: string): boolean {
   return text.includes('<teammate-message') && text.includes('</teammate-message>')
+}
+
+function extractHistoryTextBlocks(content: unknown): string[] {
+  if (typeof content === 'string') return [content]
+  if (!Array.isArray(content)) return []
+
+  return content
+    .flatMap((block) => {
+      if (!block || typeof block !== 'object') return []
+      const record = block as Record<string, unknown>
+      return record.type === 'text' && typeof record.text === 'string'
+        ? [record.text]
+        : []
+    })
+    .map((text) => text.trim())
+    .filter(Boolean)
+}
+
+function isTaskNotificationContent(content: unknown): boolean {
+  const textBlocks = extractHistoryTextBlocks(content)
+  return textBlocks.length > 0 && textBlocks.every((text) => extractTaskNotificationXml(text) !== null)
+}
+
+function extractTaskNotificationXml(text: string): string | null {
+  const trimmed = text.trim()
+  if (TASK_NOTIFICATION_RE.test(trimmed)) return trimmed
+  return trimmed.match(/<task-notification>\s*[\s\S]*?<\/task-notification>/i)?.[0] ?? null
+}
+
+function decodeXmlText(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+function readXmlTag(xml: string, tag: string): string | undefined {
+  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))
+  return match?.[1] ? decodeXmlText(match[1].trim()) : undefined
+}
+
+function extractTaskNotification(content: unknown): AgentTaskNotification | null {
+  const xml = extractHistoryTextBlocks(content)
+    .map((text) => extractTaskNotificationXml(text))
+    .find((value): value is string => value !== null)
+  if (!xml) return null
+
+  const toolUseId = readXmlTag(xml, 'tool-use-id')
+  const status = readXmlTag(xml, 'status')
+  if (
+    !toolUseId ||
+    (status !== 'completed' && status !== 'failed' && status !== 'stopped')
+  ) {
+    return null
+  }
+
+  const taskId = readXmlTag(xml, 'task-id') || toolUseId
+  const summary = readXmlTag(xml, 'summary')
+  const outputFile = readXmlTag(xml, 'output-file')
+  return {
+    taskId,
+    toolUseId,
+    status,
+    ...(summary ? { summary } : {}),
+    ...(outputFile ? { outputFile } : {}),
+  }
+}
+
+function agentNotificationRecordFromList(
+  notifications: AgentTaskNotification[],
+): Record<string, AgentTaskNotification> {
+  return Object.fromEntries(
+    notifications.map((notification) => [notification.toolUseId, notification]),
+  )
 }
 
 const TEAMMATE_CONTENT_REGEX = /<teammate-message\s+teammate_id="([^"]+)"[^>]*>\n?([\s\S]*?)\n?<\/teammate-message>/g
@@ -879,6 +1067,53 @@ type HistoryMappingOptions = {
   includeTeammateMessages?: boolean
 }
 
+function buildModelContent(content: string, attachments?: AttachmentRef[]): string {
+  const paths = attachments
+    ?.map((attachment) => attachment.path)
+    .filter((path): path is string => typeof path === 'string' && path.length > 0) ?? []
+  const trimmed = content.trim()
+  if (paths.length === 0) return trimmed
+  const prefix = paths.map((path) => `@"${path}"`).join(' ')
+  return `${prefix} ${trimmed || 'Please analyze the attached files.'}`.trim()
+}
+
+function getReferenceName(referencePath: string): string {
+  const normalized = referencePath.replace(/\\/g, '/').replace(/\/+$/, '')
+  const name = normalized.split('/').filter(Boolean).pop()
+  return name || referencePath
+}
+
+function extractLeadingFileReferences(text: string): {
+  content: string
+  attachments?: UIAttachment[]
+  modelContent?: string
+} {
+  const attachments: UIAttachment[] = []
+  let remaining = text
+
+  while (true) {
+    const match = remaining.match(/^@"([^"]+)"\s*/)
+    if (!match?.[1]) break
+
+    attachments.push({
+      type: 'file',
+      name: getReferenceName(match[1]),
+      path: match[1],
+    })
+    remaining = remaining.slice(match[0].length)
+  }
+
+  if (attachments.length === 0) {
+    return { content: text }
+  }
+
+  return {
+    content: remaining.trimStart(),
+    attachments,
+    modelContent: text,
+  }
+}
+
 /**
  * Reconstruct agentTaskNotifications from history.
  *
@@ -888,6 +1123,11 @@ type HistoryMappingOptions = {
  * teammate_ids found in subsequent user messages.
  */
 export function reconstructAgentNotifications(messages: MessageEntry[]): Record<string, AgentTaskNotification> {
+  const taskNotifications = messages
+    .filter((message) => message.type === 'user')
+    .map((message) => extractTaskNotification(message.content))
+    .filter((notification): notification is AgentTaskNotification => notification !== null)
+
   // Step 1: Collect Agent tool_use blocks → map agent name to toolUseId
   const agentNameToToolUseId = new Map<string, string>()
 
@@ -904,7 +1144,9 @@ export function reconstructAgentNotifications(messages: MessageEntry[]): Record<
     }
   }
 
-  if (agentNameToToolUseId.size === 0) return {}
+  if (agentNameToToolUseId.size === 0) {
+    return agentNotificationRecordFromList(taskNotifications)
+  }
 
   // Step 2: Extract <teammate-message> content by teammate_id
   // Skip lifecycle messages (shutdown_approved, idle_notification, etc.)
@@ -950,6 +1192,10 @@ export function reconstructAgentNotifications(messages: MessageEntry[]): Record<
     }
   }
 
+  for (const notification of taskNotifications) {
+    notifications[notification.toolUseId] = notification
+  }
+
   return notifications
 }
 
@@ -959,7 +1205,19 @@ export function mapHistoryMessagesToUiMessages(
 ): UIMessage[] {
   const includeTeammateMessages = options?.includeTeammateMessages === true
   const uiMessages: UIMessage[] = []
+  let suppressTaskNotificationResponse = false
+
   for (const msg of messages) {
+    if (msg.type === 'user' && isTaskNotificationContent(msg.content)) {
+      suppressTaskNotificationResponse = true
+      continue
+    }
+    if (msg.type === 'user') {
+      suppressTaskNotificationResponse = false
+    } else if (suppressTaskNotificationResponse) {
+      continue
+    }
+
     const timestamp = new Date(msg.timestamp).getTime()
     if (msg.type === 'user' && typeof msg.content === 'string') {
       if (isTeammateMessage(msg.content)) {
@@ -974,10 +1232,19 @@ export function mapHistoryMessagesToUiMessages(
         })
         continue
       }
-      uiMessages.push({ id: msg.id || nextId(), type: 'user_text', content: msg.content, timestamp })
+      const parsed = extractLeadingFileReferences(msg.content)
+      uiMessages.push({
+        id: msg.id || nextId(),
+        type: 'user_text',
+        content: parsed.content,
+        ...(parsed.modelContent ? { modelContent: parsed.modelContent } : {}),
+        ...(parsed.attachments ? { attachments: parsed.attachments } : {}),
+        timestamp,
+      })
       continue
     }
     if (msg.type === 'assistant' && typeof msg.content === 'string') {
+      if (!msg.content.trim()) continue
       uiMessages.push({ id: msg.id || nextId(), type: 'assistant_text', content: msg.content, timestamp, model: msg.model })
       continue
     }
@@ -1004,7 +1271,16 @@ export function mapHistoryMessagesToUiMessages(
         else if (block.type === 'tool_result') uiMessages.push({ id: nextId(), type: 'tool_result', toolUseId: block.tool_use_id ?? '', content: block.content, isError: !!block.is_error, timestamp, parentToolUseId: msg.parentToolUseId })
       }
       if (textParts.length > 0 || attachments.length > 0) {
-        uiMessages.push({ id: nextId(), type: 'user_text', content: textParts.join('\n'), attachments: attachments.length > 0 ? attachments : undefined, timestamp })
+        const parsed = extractLeadingFileReferences(textParts.join('\n'))
+        const allAttachments = [...(parsed.attachments ?? []), ...attachments]
+        uiMessages.push({
+          id: msg.id || nextId(),
+          type: 'user_text',
+          content: parsed.content,
+          ...(parsed.modelContent ? { modelContent: parsed.modelContent } : {}),
+          attachments: allAttachments.length > 0 ? allAttachments : undefined,
+          timestamp,
+        })
       }
     }
   }

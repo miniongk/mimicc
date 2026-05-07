@@ -1,11 +1,12 @@
 import { create } from 'zustand'
 import { settingsApi } from '../api/settings'
 import { modelsApi } from '../api/models'
-import type { PermissionMode, EffortLevel, ModelInfo, ThemeMode } from '../types/settings'
+import type { PermissionMode, EffortLevel, ModelInfo, ThemeMode, WebSearchSettings } from '../types/settings'
 import type { Locale } from '../i18n'
 import { useUIStore } from './uiStore'
 
 const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+let desktopNotificationsSaveQueue: Promise<void> = Promise.resolve()
 
 function getStoredLocale(): Locale {
   try {
@@ -19,11 +20,14 @@ type SettingsStore = {
   permissionMode: PermissionMode
   currentModel: ModelInfo | null
   effortLevel: EffortLevel
+  thinkingEnabled: boolean
   availableModels: ModelInfo[]
   activeProviderName: string | null
   locale: Locale
   theme: ThemeMode
   skipWebFetchPreflight: boolean
+  desktopNotificationsEnabled: boolean
+  webSearch: WebSearchSettings
   isLoading: boolean
   error: string | null
 
@@ -31,20 +35,26 @@ type SettingsStore = {
   setPermissionMode: (mode: PermissionMode) => Promise<void>
   setModel: (modelId: string) => Promise<void>
   setEffort: (level: EffortLevel) => Promise<void>
+  setThinkingEnabled: (enabled: boolean) => Promise<void>
   setLocale: (locale: Locale) => void
   setTheme: (theme: ThemeMode) => Promise<void>
   setSkipWebFetchPreflight: (enabled: boolean) => Promise<void>
+  setDesktopNotificationsEnabled: (enabled: boolean) => Promise<void>
+  setWebSearch: (settings: WebSearchSettings) => Promise<void>
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   permissionMode: 'default',
   currentModel: null,
   effortLevel: 'medium',
+  thinkingEnabled: true,
   availableModels: [],
   activeProviderName: null,
   locale: getStoredLocale(),
   theme: useUIStore.getState().theme,
   skipWebFetchPreflight: true,
+  desktopNotificationsEnabled: false,
+  webSearch: { mode: 'auto', tavilyApiKey: '', braveApiKey: '' },
   isLoading: false,
   error: null,
 
@@ -66,8 +76,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         activeProviderName: modelsRes.provider?.name ?? null,
         currentModel: model,
         effortLevel: level,
+        thinkingEnabled: userSettings.alwaysThinkingEnabled !== false,
         theme,
         skipWebFetchPreflight: userSettings.skipWebFetchPreflight !== false,
+        desktopNotificationsEnabled: userSettings.desktopNotificationsEnabled === true,
+        webSearch: normalizeWebSearchSettings(userSettings.webSearch),
         isLoading: false,
         error: null,
       })
@@ -105,6 +118,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
+  setThinkingEnabled: async (enabled) => {
+    const prev = get().thinkingEnabled
+    set({ thinkingEnabled: enabled })
+    try {
+      await settingsApi.updateUser({ alwaysThinkingEnabled: enabled ? undefined : false })
+    } catch {
+      set({ thinkingEnabled: prev })
+    }
+  },
+
   setLocale: (locale) => {
     set({ locale })
     try { localStorage.setItem(LOCALE_STORAGE_KEY, locale) } catch { /* noop */ }
@@ -131,4 +154,44 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set({ skipWebFetchPreflight: prev })
     }
   },
+
+  setDesktopNotificationsEnabled: async (enabled) => {
+    const prev = get().desktopNotificationsEnabled
+    set({ desktopNotificationsEnabled: enabled })
+    const save = desktopNotificationsSaveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (get().desktopNotificationsEnabled !== enabled) return
+        await settingsApi.updateUser({ desktopNotificationsEnabled: enabled })
+      })
+
+    desktopNotificationsSaveQueue = save
+
+    try {
+      await save
+    } catch {
+      if (get().desktopNotificationsEnabled === enabled) {
+        set({ desktopNotificationsEnabled: prev })
+      }
+    }
+  },
+
+  setWebSearch: async (webSearch) => {
+    const prev = get().webSearch
+    const next = normalizeWebSearchSettings(webSearch)
+    set({ webSearch: next })
+    try {
+      await settingsApi.updateUser({ webSearch: next })
+    } catch {
+      set({ webSearch: prev })
+    }
+  },
 }))
+
+function normalizeWebSearchSettings(settings: WebSearchSettings | undefined): WebSearchSettings {
+  return {
+    mode: settings?.mode ?? 'auto',
+    tavilyApiKey: settings?.tavilyApiKey ?? '',
+    braveApiKey: settings?.braveApiKey ?? '',
+  }
+}

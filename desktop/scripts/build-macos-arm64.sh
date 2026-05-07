@@ -9,12 +9,12 @@ REPO_ROOT="$(cd "${DESKTOP_DIR}/.." && pwd)"
 TARGET_TRIPLE="aarch64-apple-darwin"
 TAURI_TARGET_DIR="${DESKTOP_DIR}/src-tauri/target"
 CANONICAL_OUTPUT_DIR="${DESKTOP_DIR}/build-artifacts/macos-arm64"
-APP_BUNDLE_NAME="Claude Code Haha.app"
+APP_BUNDLE_NAME="Claude Code 咪咪.app"
 APP_BUNDLE_ID="com.claude-code-haha.desktop"
 
 usage() {
   cat <<'EOF'
-Build Claude Code Haha desktop for macOS Apple Silicon and output a DMG.
+Build Claude Code 咪咪 desktop for macOS Apple Silicon and output a DMG.
 
 Usage:
   ./desktop/scripts/build-macos-arm64.sh [extra tauri build args...]
@@ -78,6 +78,11 @@ rm -rf "${DESKTOP_DIR}/src-tauri/binaries/claude-sidecar-"*
 rm -rf "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/bundle"
 rm -rf "${DESKTOP_DIR}/src-tauri/target/release/bundle"
 rm -rf "${DESKTOP_DIR}/dist"
+rm -f "${DESKTOP_DIR}/tsconfig.tsbuildinfo"
+rm -rf "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/build/claude-code-desktop-"*
+rm -rf "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/.fingerprint/claude-code-desktop-"*
+rm -f "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/deps/claude_code_desktop-"*
+rm -f "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/deps/libclaude_code_desktop-"*
 
 echo "[build-macos-arm64] Rebuilding frontend (tsc + vite)..."
 (cd "${DESKTOP_DIR}" && bun run build)
@@ -162,7 +167,7 @@ build_canonical_dmg() {
 
   # Create a read-write DMG first so we can customize the Finder layout
   hdiutil create \
-    -volname "Claude Code Haha" \
+    -volname "Claude Code 咪咪" \
     -srcfolder "${staging_dir}" \
     -ov \
     -format UDRW \
@@ -183,7 +188,7 @@ build_canonical_dmg() {
   # 所以这里允许 osascript 非零退出,只 warn,不让 set -e 炸掉整个脚本。
   if ! osascript <<APPLESCRIPT
 tell application "Finder"
-  tell disk "Claude Code Haha"
+  tell disk "Claude Code 咪咪"
     open
     set current view of container window to icon view
     set toolbar visible of container window to false
@@ -217,23 +222,59 @@ APPLESCRIPT
   rm -f "${rw_dmg}"
 }
 
+codesign_cdhash() {
+  local executable="$1"
+  codesign -d --verbose=4 "${executable}" 2>&1 \
+    | awk -F= '/^CDHash=/{print $2; exit}'
+}
+
+sign_canonical_app_bundle() {
+  local app_bundle="$1"
+  local sidecar="${app_bundle}/Contents/MacOS/claude-sidecar"
+  local sidecar_cdhash_before=""
+  local sidecar_cdhash_after=""
+
+  if [[ -x "${sidecar}" ]]; then
+    sidecar_cdhash_before="$(codesign_cdhash "${sidecar}")"
+  fi
+
+  # Tauri --no-sign leaves the outer .app with no sealed resources, which
+  # fails strict bundle validation once Resources/icon.icns exists. Sign only
+  # the outer bundle: do not pass --deep, because re-signing claude-sidecar
+  # changes its code-signature hash and breaks existing macOS Keychain ACLs.
+  codesign --force --sign - --timestamp=none "${app_bundle}"
+
+  if [[ -x "${sidecar}" ]]; then
+    sidecar_cdhash_after="$(codesign_cdhash "${sidecar}")"
+    if [[ "${sidecar_cdhash_before}" != "${sidecar_cdhash_after}" ]]; then
+      echo "[build-macos-arm64] ERROR: sidecar signature hash changed while signing app bundle" >&2
+      echo "[build-macos-arm64] before=${sidecar_cdhash_before}" >&2
+      echo "[build-macos-arm64] after=${sidecar_cdhash_after}" >&2
+      exit 1
+    fi
+  fi
+
+  codesign --verify --deep --strict --verbose=2 "${app_bundle}"
+}
+
 if [[ -n "${LATEST_DMG}" ]]; then
   cp -f "${LATEST_DMG}" "${CANONICAL_OUTPUT_DIR}/"
 fi
 
 if [[ -n "${LATEST_APP}" ]]; then
-  # 注意: 不要再对 .app 重签名。曾经脚本在这里跑过
+  # 不要 deep re-sign。曾经脚本在这里跑过
   # `codesign --force --deep --sign - --identifier <bundle-id>` 来统一
   # sidecar 和外层的 signing identifier,但这会改变 sidecar binary 的
   # code signature hash —— macOS Keychain ACL 按 hash 识别 caller,
   # 重签完再访问时会被 ACL 当作"陌生 binary"静默拒绝,导致 CLI 读不到
   # OAuth token,最终请求打到 Anthropic 返回 403 "Request not allowed"。
-  # Tauri 的 --no-sign 其实已经做了 ad-hoc 签名,直接用即可。
+  # 这里只浅签外层 bundle,让 .app 拥有有效资源封印,同时保留 sidecar hash。
   cp -R "${LATEST_APP}" "${CANONICAL_OUTPUT_DIR}/"
+  sign_canonical_app_bundle "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}"
   rm -f "${CANONICAL_OUTPUT_DIR}/"*.dmg
   build_canonical_dmg \
     "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}" \
-    "${CANONICAL_OUTPUT_DIR}/$(basename "${LATEST_DMG:-Claude Code Haha_0.1.0_aarch64.dmg}")"
+    "${CANONICAL_OUTPUT_DIR}/$(basename "${LATEST_DMG:-Claude Code 咪咪_0.1.0_aarch64.dmg}")"
 fi
 
 cat > "${CANONICAL_OUTPUT_DIR}/BUILD_INFO.txt" <<EOF

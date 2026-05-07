@@ -6,7 +6,7 @@ import { UpdateChecker } from '../shared/UpdateChecker'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore, type SettingsTab } from '../../stores/uiStore'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
-import { initializeDesktopServerUrl } from '../../lib/desktopRuntime'
+import { initializeDesktopServerUrl, isTauriRuntime } from '../../lib/desktopRuntime'
 import { TabBar } from './TabBar'
 import { StartupErrorView } from './StartupErrorView'
 import { useTabStore, SETTINGS_TAB_ID } from '../../stores/tabStore'
@@ -28,16 +28,19 @@ export function AppShell() {
         await initializeDesktopServerUrl()
         await fetchSettings()
 
-        // Restore tabs from localStorage
-        await useTabStore.getState().restoreTabs()
-        const { activeTabId: activeId, tabs } = useTabStore.getState()
-        const activeTab = tabs.find((tab) => tab.sessionId === activeId)
-        if (activeId && activeTab?.type === 'session') {
-          useChatStore.getState().connectToSession(activeId)
-        }
         if (!cancelled) {
           setReady(true)
         }
+
+        void (async () => {
+          await useTabStore.getState().restoreTabs()
+          if (cancelled) return
+          const { activeTabId: activeId, tabs } = useTabStore.getState()
+          const activeTab = tabs.find((tab) => tab.sessionId === activeId)
+          if (activeId && activeTab?.type === 'session') {
+            useChatStore.getState().connectToSession(activeId)
+          }
+        })().catch(() => {})
       } catch (error) {
         if (!cancelled) {
           setStartupError(error instanceof Error ? error.message : String(error))
@@ -55,8 +58,9 @@ export function AppShell() {
 
   // Listen for macOS native menu navigation events (About / Settings)
   useEffect(() => {
+    if (!isTauriRuntime()) return
     let unlisten: (() => void) | undefined
-    import(/* @vite-ignore */ '@tauri-apps/api/event')
+    import('@tauri-apps/api/event')
       .then(({ listen }) =>
         listen<string>('native-menu-navigate', (event) => {
           const target = event.payload as SettingsTab | 'settings'

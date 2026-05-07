@@ -16,6 +16,7 @@ import type { ProviderPreset } from '../types/providerPreset'
 type ProviderStore = {
   providers: SavedProvider[]
   activeId: string | null
+  hasLoadedProviders: boolean
   presets: ProviderPreset[]
   isLoading: boolean
   isPresetsLoading: boolean
@@ -28,13 +29,14 @@ type ProviderStore = {
   deleteProvider: (id: string) => Promise<void>
   activateProvider: (id: string) => Promise<void>
   activateOfficial: () => Promise<void>
-  testProvider: (id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string }) => Promise<ProviderTestResult>
+  testProvider: (id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string; authStrategy?: string }) => Promise<ProviderTestResult>
   testConfig: (input: TestProviderConfigInput) => Promise<ProviderTestResult>
 }
 
 export const useProviderStore = create<ProviderStore>((set, get) => ({
   providers: [],
   activeId: null,
+  hasLoadedProviders: false,
   presets: [],
   isLoading: false,
   isPresetsLoading: false,
@@ -44,9 +46,12 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const { providers, activeId } = await providersApi.list()
-      set({ providers, activeId, isLoading: false })
+      set({ providers, activeId, hasLoadedProviders: true, isLoading: false })
     } catch (err) {
-      set({ isLoading: false, error: err instanceof Error ? err.message : String(err) })
+      set({
+        isLoading: false,
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
   },
 
