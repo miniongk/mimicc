@@ -3,7 +3,7 @@ use std::{
     fs,
     io::{Error as IoError, ErrorKind, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
     str,
     sync::{
@@ -31,6 +31,10 @@ use tauri_plugin_shell::{
 mod macos_notifications {
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_int};
+    use std::sync::{Mutex, OnceLock};
+
+    use serde::Serialize;
+    use tauri::{AppHandle, Emitter};
 
     const ERROR_BUFFER_LEN: usize = 1024;
 
@@ -46,10 +50,20 @@ mod macos_notifications {
         fn cchh_send_user_notification(
             title: *const c_char,
             body: *const c_char,
+            target: *const c_char,
             error_buffer: *mut c_char,
             error_buffer_len: usize,
         ) -> bool;
+        fn cchh_set_notification_response_callback(callback: Option<extern "C" fn(*const c_char)>);
     }
+
+    #[derive(Clone, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct NotificationClickPayload {
+        target: Option<String>,
+    }
+
+    static NOTIFICATION_APP_HANDLE: OnceLock<Mutex<Option<AppHandle>>> = OnceLock::new();
 
     fn new_error_buffer() -> [c_char; ERROR_BUFFER_LEN] {
         [0; ERROR_BUFFER_LEN]
@@ -106,19 +120,63 @@ mod macos_notifications {
         permission_state()
     }
 
-    pub fn send_notification(title: String, body: Option<String>) -> Result<bool, String> {
+    extern "C" fn handle_notification_response(target: *const c_char) {
+        let target = if target.is_null() {
+            None
+        } else {
+            let value = unsafe { CStr::from_ptr(target) }
+                .to_string_lossy()
+                .trim()
+                .to_string();
+            (!value.is_empty()).then_some(value)
+        };
+
+        let Some(app) = NOTIFICATION_APP_HANDLE
+            .get()
+            .and_then(|handle| handle.lock().ok().and_then(|guard| guard.clone()))
+        else {
+            return;
+        };
+
+        super::show_main_window(&app);
+        let _ = app.emit(
+            "desktop-notification-clicked",
+            NotificationClickPayload { target },
+        );
+    }
+
+    pub fn install_click_handler(app: AppHandle) {
+        let handle = NOTIFICATION_APP_HANDLE.get_or_init(|| Mutex::new(None));
+        if let Ok(mut guard) = handle.lock() {
+            *guard = Some(app);
+        }
+        unsafe { cchh_set_notification_response_callback(Some(handle_notification_response)) };
+    }
+
+    pub fn send_notification(
+        title: String,
+        body: Option<String>,
+        target: Option<String>,
+    ) -> Result<bool, String> {
         let title = CString::new(title)
             .map_err(|_| "notification title contains an unsupported NUL byte".to_string())?;
         let body = body
             .map(CString::new)
             .transpose()
             .map_err(|_| "notification body contains an unsupported NUL byte".to_string())?;
+        let target = target
+            .map(CString::new)
+            .transpose()
+            .map_err(|_| "notification target contains an unsupported NUL byte".to_string())?;
 
         let mut error_buffer = new_error_buffer();
         let sent = unsafe {
             cchh_send_user_notification(
                 title.as_ptr(),
                 body.as_ref()
+                    .map_or(std::ptr::null(), |value| value.as_ptr()),
+                target
+                    .as_ref()
                     .map_or(std::ptr::null(), |value| value.as_ptr()),
                 error_buffer.as_mut_ptr(),
                 ERROR_BUFFER_LEN,
@@ -138,6 +196,8 @@ mod macos_notifications {
 
 #[cfg(not(target_os = "macos"))]
 mod macos_notifications {
+    use tauri::AppHandle;
+
     pub fn permission_state() -> Result<String, String> {
         Ok("unsupported".to_string())
     }
@@ -146,12 +206,20 @@ mod macos_notifications {
         Ok("unsupported".to_string())
     }
 
-    pub fn send_notification(_title: String, _body: Option<String>) -> Result<bool, String> {
+    pub fn install_click_handler(_app: AppHandle) {}
+
+    pub fn send_notification(
+        _title: String,
+        _body: Option<String>,
+        _target: Option<String>,
+    ) -> Result<bool, String> {
         Ok(false)
     }
 }
 
 const SERVER_STARTUP_LOG_LIMIT: usize = 80;
+const SERVER_BIND_HOST: &str = "0.0.0.0";
+const SERVER_CONTROL_HOST: &str = "127.0.0.1";
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_SHOW_ID: &str = "tray_show";
 const TRAY_QUIT_ID: &str = "tray_quit";
@@ -279,12 +347,26 @@ fn prepare_for_update_install(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn mark_app_quitting(app: &AppHandle) {
+#[tauri::command]
+fn cancel_update_install(app: AppHandle) -> Result<(), String> {
+    clear_app_quitting(&app);
+    Ok(())
+}
+
+fn set_app_quitting(app: &AppHandle, next: bool) {
     if let Some(state) = app.try_state::<AppExitState>() {
         if let Ok(mut is_quitting) = state.is_quitting.lock() {
-            *is_quitting = true;
+            *is_quitting = next;
         }
     }
+}
+
+fn mark_app_quitting(app: &AppHandle) {
+    set_app_quitting(app, true);
+}
+
+fn clear_app_quitting(app: &AppHandle) {
+    set_app_quitting(app, false);
 }
 
 fn should_hide_to_tray(app: &AppHandle, label: &str) -> bool {
@@ -731,18 +813,53 @@ fn terminal_kill(state: State<'_, TerminalState>, session_id: u32) -> Result<(),
 }
 
 #[tauri::command]
-fn macos_notification_permission_state() -> Result<String, String> {
-    macos_notifications::permission_state()
+async fn macos_notification_permission_state() -> Result<String, String> {
+    run_notification_bridge(macos_notifications::permission_state).await
 }
 
 #[tauri::command]
-fn macos_request_notification_permission() -> Result<String, String> {
-    macos_notifications::request_permission()
+async fn macos_request_notification_permission() -> Result<String, String> {
+    run_notification_bridge(macos_notifications::request_permission).await
 }
 
 #[tauri::command]
-fn macos_send_notification(title: String, body: Option<String>) -> Result<bool, String> {
-    macos_notifications::send_notification(title, body)
+async fn macos_send_notification(
+    title: String,
+    body: Option<String>,
+    target: Option<String>,
+) -> Result<bool, String> {
+    run_notification_bridge(move || macos_notifications::send_notification(title, body, target))
+        .await
+}
+
+#[tauri::command]
+fn open_windows_notification_settings() -> Result<bool, String> {
+    open_windows_notification_settings_impl()
+}
+
+#[cfg(target_os = "windows")]
+fn open_windows_notification_settings_impl() -> Result<bool, String> {
+    StdCommand::new("explorer.exe")
+        .arg("ms-settings:notifications")
+        .spawn()
+        .map_err(|err| format!("open Windows notification settings: {err}"))?;
+
+    Ok(true)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_windows_notification_settings_impl() -> Result<bool, String> {
+    Ok(false)
+}
+
+async fn run_notification_bridge<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|err| format!("notification bridge worker failed: {err}"))?
 }
 
 fn decode_terminal_output(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
@@ -925,9 +1042,9 @@ fn default_shell() -> String {
     }
 }
 
-fn reserve_local_port() -> Result<u16, String> {
-    let listener =
-        TcpListener::bind("127.0.0.1:0").map_err(|err| format!("bind local port: {err}"))?;
+fn reserve_local_port(bind_host: &str) -> Result<u16, String> {
+    let listener = TcpListener::bind(format!("{bind_host}:0"))
+        .map_err(|err| format!("bind local port: {err}"))?;
     let port = listener
         .local_addr()
         .map_err(|err| format!("read local port: {err}"))?
@@ -1001,12 +1118,41 @@ fn resolve_app_root(_app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn select_h5_dist_dir(resource_dir: Option<&Path>, app_root: &Path) -> PathBuf {
+    let mut candidates = Vec::new();
+    if let Some(resource_dir) = resource_dir {
+        candidates.push(resource_dir.join("_up_").join("dist"));
+        candidates.push(resource_dir.join("dist"));
+    }
+    candidates.push(app_root.join("../Resources/_up_/dist"));
+    candidates.push(app_root.join("../Resources/dist"));
+
+    candidates
+        .iter()
+        .find(|candidate| candidate.join("index.html").is_file())
+        .cloned()
+        .unwrap_or_else(|| {
+            resource_dir
+                .map(|dir| dir.join("_up_").join("dist"))
+                .unwrap_or_else(|| app_root.join("../Resources/_up_/dist"))
+        })
+}
+
+fn resolve_h5_dist_dir(app: &AppHandle, app_root: &Path) -> PathBuf {
+    let resource_dir = app.path().resource_dir().ok();
+    select_h5_dist_dir(resource_dir.as_deref(), app_root)
+}
+
 fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
-    let host = "127.0.0.1";
-    let port = reserve_local_port()?;
-    let url = format!("http://{host}:{port}");
+    let bind_host = SERVER_BIND_HOST;
+    let control_host = SERVER_CONTROL_HOST;
+    let port = reserve_local_port(bind_host)?;
+    let url = format!("http://{control_host}:{port}");
     let app_root = resolve_app_root(app)?;
     let app_root_arg = app_root.to_string_lossy().to_string();
+    let h5_dist_dir = resolve_h5_dist_dir(app, &app_root)
+        .to_string_lossy()
+        .to_string();
 
     // 单一合并 sidecar：第一个参数选 server / cli / adapters 模式。
     let mut sidecar = app
@@ -1016,12 +1162,15 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
     for (key, value) in terminal_environment(&default_shell()) {
         sidecar = sidecar.env(key, value);
     }
+    sidecar = sidecar
+        .env("CLAUDE_H5_AUTO_PUBLIC_URL", "1")
+        .env("CLAUDE_H5_DIST_DIR", h5_dist_dir);
     let sidecar = sidecar.args([
         "server",
         "--app-root",
         &app_root_arg,
         "--host",
-        host,
+        bind_host,
         "--port",
         &port.to_string(),
     ]);
@@ -1061,7 +1210,7 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
         }
     });
 
-    if let Err(err) = wait_for_server(host, port) {
+    if let Err(err) = wait_for_server(control_host, port) {
         let _ = child.kill();
         return Err(format_server_startup_error(&err, &startup_logs));
     }
@@ -1260,9 +1409,10 @@ mod tests {
     use super::{
         decode_terminal_output, default_utf8_locale, ensure_utf8_locale,
         has_meaningful_intersection, is_persistable_window_state, parse_env_block,
-        StoredWindowState,
+        run_notification_bridge, select_h5_dist_dir, StoredWindowState, SERVER_BIND_HOST,
+        SERVER_CONTROL_HOST,
     };
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fs};
 
     #[test]
     fn window_state_rejects_too_small_sizes() {
@@ -1398,11 +1548,54 @@ mod tests {
         assert_eq!(env.get("LC_CTYPE").map(String::as_str), Some("en_US.UTF8"));
         assert_eq!(env.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
     }
+
+    #[test]
+    fn server_sidecar_binds_lan_but_reports_loopback_control_url() {
+        assert_eq!(SERVER_BIND_HOST, "0.0.0.0");
+        assert_eq!(SERVER_CONTROL_HOST, "127.0.0.1");
+    }
+
+    #[test]
+    fn h5_dist_dir_prefers_tauri_parent_resource_mapping() {
+        let root = std::env::temp_dir().join(format!(
+            "cchh-h5-dist-test-{}",
+            std::process::id()
+        ));
+        let resource_dir = root.join("Contents").join("Resources");
+        let app_root = root.join("Contents").join("MacOS");
+        let mapped_dist = resource_dir.join("_up_").join("dist");
+
+        fs::create_dir_all(&mapped_dist).expect("create mapped dist dir");
+        fs::create_dir_all(&app_root).expect("create app root dir");
+        fs::write(mapped_dist.join("index.html"), "").expect("write h5 shell");
+
+        assert_eq!(
+            select_h5_dist_dir(Some(&resource_dir), &app_root),
+            mapped_dist
+        );
+
+        fs::remove_dir_all(root).expect("remove temp app tree");
+    }
+
+    #[test]
+    fn notification_bridge_runs_off_the_calling_thread() {
+        let caller_thread = std::thread::current().id();
+        let ran_on_worker = tauri::async_runtime::block_on(run_notification_bridge(move || {
+            Ok(std::thread::current().id() != caller_thread)
+        }))
+        .expect("notification bridge operation should complete");
+
+        assert!(ran_on_worker);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        // Keep this first so duplicate launches are stopped before sidecars start.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .manage(ServerState::default())
         .manage(AdapterState::default())
         .manage(TerminalState::default())
@@ -1416,13 +1609,15 @@ pub fn run() {
             get_server_url,
             restart_adapters_sidecar,
             prepare_for_update_install,
+            cancel_update_install,
             terminal_spawn,
             terminal_write,
             terminal_resize,
             terminal_kill,
             macos_notification_permission_state,
             macos_request_notification_permission,
-            macos_send_notification
+            macos_send_notification,
+            open_windows_notification_settings
         ]);
 
     // macOS: native menu bar (traffic-light overlay style)
@@ -1487,6 +1682,7 @@ pub fn run() {
     let app = builder
         .setup(|app| {
             setup_system_tray(app)?;
+            macos_notifications::install_click_handler(app.handle().clone());
             restore_main_window_state(&app.handle());
 
             let state = app.state::<ServerState>();

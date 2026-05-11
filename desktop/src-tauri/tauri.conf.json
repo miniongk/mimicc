@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/nicegui/static/tauri-schema-v2.json",
   "productName": "Claude Code 咪咪",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "identifier": "com.claude-code-mimicc.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -40,7 +40,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
@@ -50,7 +50,9 @@
     "externalBin": [
       "binaries/claude-sidecar"
     ],
-    "resources": [],
+    "resources": [
+      "../dist"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

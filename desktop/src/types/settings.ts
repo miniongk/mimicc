@@ -12,6 +12,13 @@ export type WebSearchSettings = {
   braveApiKey?: string
 }
 
+export type H5AccessSettings = {
+  enabled: boolean
+  tokenPreview: string | null
+  allowedOrigins: string[]
+  publicBaseUrl: string | null
+}
+
 export type ModelInfo = {
   id: string
   name: string
@@ -29,5 +36,6 @@ export type UserSettings = {
   skipWebFetchPreflight?: boolean
   desktopNotificationsEnabled?: boolean
   webSearch?: WebSearchSettings
+  language?: string
   [key: string]: unknown
 }

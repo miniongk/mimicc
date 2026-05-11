@@ -10,6 +10,8 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { ApiError } from '../middleware/errorHandler.js'
+import { readRecoverableJsonFile } from './recoverableJsonFile.js'
+import { ManagedSettingsService } from './managedSettingsService.js'
 import { anthropicToOpenaiChat } from '../proxy/transform/anthropicToOpenaiChat.js'
 import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenaiResponses.js'
 import { openaiChatToAnthropic } from '../proxy/transform/openaiChatToAnthropic.js'
@@ -17,6 +19,10 @@ import { openaiResponsesToAnthropic } from '../proxy/transform/openaiResponsesTo
 import type { AnthropicRequest, AnthropicResponse } from '../proxy/transform/types.js'
 import { PROVIDER_PRESETS } from '../config/providerPresets.js'
 import { MODEL_CONTEXT_WINDOWS_ENV_KEY } from '../../utils/model/modelContextWindows.js'
+import {
+  CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
+  ensurePersistentStorageUpgraded,
+} from './persistentStorageMigrations.js'
 import type {
   SavedProvider,
   ProvidersIndex,
@@ -44,8 +50,65 @@ const MANAGED_ENV_KEYS = [
   MODEL_CONTEXT_WINDOWS_ENV_KEY,
 ] as const
 
-const DEFAULT_INDEX: ProvidersIndex = { activeId: null, providers: [] }
+const CUSTOM_PROVIDER_MODEL_CAPABILITIES = 'thinking,effort,adaptive_thinking,max_effort'
+
+const DEFAULT_INDEX: ProvidersIndex = {
+  schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
+  activeId: null,
+  providers: [],
+}
 const AUTH_ENV_KEYS = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isProviderModels(value: unknown): value is SavedProvider['models'] {
+  return (
+    isRecord(value) &&
+    typeof value.main === 'string' &&
+    typeof value.haiku === 'string' &&
+    typeof value.sonnet === 'string' &&
+    typeof value.opus === 'string'
+  )
+}
+
+function isSavedProvider(value: unknown): value is SavedProvider {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.id === 'string' &&
+    typeof value.presetId === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.apiKey === 'string' &&
+    typeof value.baseUrl === 'string' &&
+    isProviderModels(value.models)
+  )
+}
+
+function normalizeProvidersIndex(value: unknown): ProvidersIndex | null {
+  if (!isRecord(value) || !Array.isArray(value.providers)) {
+    return null
+  }
+
+  const { activeProviderId: _legacyActiveProviderId, ...rest } = value
+  const providers = value.providers.filter(isSavedProvider)
+  const rawActiveId =
+    typeof value.activeId === 'string'
+      ? value.activeId
+      : typeof _legacyActiveProviderId === 'string'
+        ? _legacyActiveProviderId
+        : null
+  const activeId = rawActiveId && providers.some((provider) => provider.id === rawActiveId)
+    ? rawActiveId
+    : null
+
+  return {
+    ...rest,
+    schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
+    activeId,
+    providers,
+  }
+}
 
 function getPresetDefaultEnv(presetId: string): Record<string, string> {
   return PROVIDER_PRESETS.find((preset) => preset.id === presetId)?.defaultEnv ?? {}
@@ -81,7 +144,10 @@ function buildProviderAuthEnv(
     case 'api_key':
       return key ? { ANTHROPIC_API_KEY: key } : {}
     case 'auth_token':
-      return key ? { ANTHROPIC_AUTH_TOKEN: key } : {}
+      return {
+        ANTHROPIC_API_KEY: '',
+        ...(key ? { ANTHROPIC_AUTH_TOKEN: key } : {}),
+      }
     case 'auth_token_empty_api_key':
       return {
         ANTHROPIC_API_KEY: '',
@@ -106,6 +172,7 @@ function getManagedEnvKeys(): string[] {
 
 export class ProviderService {
   private static serverPort = 3456
+  private managedSettingsService = new ManagedSettingsService()
 
   static setServerPort(port: number): void {
     ProviderService.serverPort = port
@@ -126,20 +193,14 @@ export class ProviderService {
     return path.join(this.getCcHahaDir(), 'providers.json')
   }
 
-  private getSettingsPath(): string {
-    return path.join(this.getCcHahaDir(), 'settings.json')
-  }
-
   private async readIndex(): Promise<ProvidersIndex> {
-    try {
-      const raw = await fs.readFile(this.getIndexPath(), 'utf-8')
-      return JSON.parse(raw) as ProvidersIndex
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { ...DEFAULT_INDEX, providers: [] }
-      }
-      throw ApiError.internal(`Failed to read providers index: ${err}`)
-    }
+    await ensurePersistentStorageUpgraded()
+    return readRecoverableJsonFile({
+      filePath: this.getIndexPath(),
+      label: 'providers index',
+      defaultValue: DEFAULT_INDEX,
+      normalize: normalizeProvidersIndex,
+    })
   }
 
   private async writeIndex(index: ProvidersIndex): Promise<void> {
@@ -158,28 +219,7 @@ export class ProviderService {
   }
 
   private async readSettings(): Promise<Record<string, unknown>> {
-    try {
-      const raw = await fs.readFile(this.getSettingsPath(), 'utf-8')
-      return JSON.parse(raw) as Record<string, unknown>
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
-      throw ApiError.internal(`Failed to read settings.json: ${err}`)
-    }
-  }
-
-  private async writeSettings(settings: Record<string, unknown>): Promise<void> {
-    const filePath = this.getSettingsPath()
-    const dir = path.dirname(filePath)
-    await fs.mkdir(dir, { recursive: true })
-
-    const tmpFile = `${filePath}.tmp.${Date.now()}`
-    try {
-      await fs.writeFile(tmpFile, JSON.stringify(settings, null, 2) + '\n', 'utf-8')
-      await fs.rename(tmpFile, filePath)
-    } catch (err) {
-      await fs.unlink(tmpFile).catch(() => {})
-      throw ApiError.internal(`Failed to write settings.json: ${err}`)
-    }
+    return this.managedSettingsService.readSettings()
   }
 
   async getManagedSettings(): Promise<Record<string, unknown>> {
@@ -187,8 +227,10 @@ export class ProviderService {
   }
 
   async updateManagedSettings(settings: Record<string, unknown>): Promise<void> {
-    const current = await this.readSettings()
-    await this.writeSettings(Object.assign({}, current, settings))
+    await this.managedSettingsService.updateSettings((current) => ({
+      settings: Object.assign({}, current, settings),
+      result: undefined,
+    }))
   }
 
   // --- CRUD ---
@@ -317,9 +359,18 @@ export class ProviderService {
     }
 
     const presetDefaultEnv = getPresetDefaultEnv(provider.presetId)
+    const customProviderCapabilityEnv =
+      provider.presetId === 'custom'
+        ? {
+            ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES: CUSTOM_PROVIDER_MODEL_CAPABILITIES,
+            ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: CUSTOM_PROVIDER_MODEL_CAPABILITIES,
+            ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES: CUSTOM_PROVIDER_MODEL_CAPABILITIES,
+          }
+        : {}
 
     return {
       ...omitAuthEnv(presetDefaultEnv),
+      ...customProviderCapabilityEnv,
       ...(provider.autoCompactWindow !== undefined && {
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(provider.autoCompactWindow),
       }),
@@ -343,36 +394,50 @@ export class ProviderService {
   }
 
   private async syncToSettings(provider: SavedProvider): Promise<void> {
-    const settings = await this.readSettings()
-    const existingEnv = (settings.env as Record<string, string>) || {}
-    const cleanedEnv = { ...existingEnv }
+    await this.managedSettingsService.updateSettings((settings) => {
+      const existingEnv = (settings.env as Record<string, string>) || {}
+      const cleanedEnv = { ...existingEnv }
 
-    for (const key of getManagedEnvKeys()) {
-      delete cleanedEnv[key]
-    }
+      for (const key of getManagedEnvKeys()) {
+        delete cleanedEnv[key]
+      }
 
-    settings.env = {
-      ...cleanedEnv,
-      ...this.buildManagedEnv(provider),
-    }
-
-    await this.writeSettings(settings)
+      return {
+        settings: {
+          ...settings,
+          env: {
+            ...cleanedEnv,
+            ...this.buildManagedEnv(provider),
+          },
+        },
+        result: undefined,
+      }
+    })
   }
 
   private async clearProviderFromSettings(): Promise<void> {
-    const settings = await this.readSettings()
-    const env = (settings.env as Record<string, string>) || {}
+    await this.managedSettingsService.updateSettings((settings) => {
+      const env = { ...((settings.env as Record<string, string>) || {}) }
 
-    for (const key of getManagedEnvKeys()) {
-      delete env[key]
-    }
+      for (const key of getManagedEnvKeys()) {
+        delete env[key]
+      }
 
-    settings.env = env
-    if (Object.keys(env).length === 0) {
-      delete settings.env
-    }
+      const nextSettings: Record<string, unknown> = {
+        ...settings,
+      }
 
-    await this.writeSettings(settings)
+      if (Object.keys(env).length === 0) {
+        delete nextSettings.env
+      } else {
+        nextSettings.env = env
+      }
+
+      return {
+        settings: nextSettings,
+        result: undefined,
+      }
+    })
   }
 
   // --- Auth status ---

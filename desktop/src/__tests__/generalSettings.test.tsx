@@ -18,6 +18,9 @@ const desktopNotificationsMock = vi.hoisted(() => ({
   requestDesktopNotificationPermission: vi.fn(),
   openDesktopNotificationSettings: vi.fn(),
 }))
+const clipboardMock = vi.hoisted(() => ({
+  copyTextToClipboard: vi.fn(),
+}))
 const providerStoreState = {
   providers: [] as SavedProvider[],
   activeId: null as string | null,
@@ -54,6 +57,7 @@ vi.mock('../api/providers', () => ({
 }))
 
 vi.mock('../lib/desktopNotifications', () => desktopNotificationsMock)
+vi.mock('../components/chat/clipboard', () => clipboardMock)
 
 vi.mock('../components/settings/ClaudeOfficialLogin', () => ({
   ClaudeOfficialLogin: () => <div data-testid="claude-official-login" />,
@@ -61,6 +65,10 @@ vi.mock('../components/settings/ClaudeOfficialLogin', () => ({
 
 vi.mock('../pages/AdapterSettings', () => ({
   AdapterSettings: () => <div>Adapter Settings Mock</div>,
+}))
+
+vi.mock('../pages/ActivitySettings', () => ({
+  ActivitySettings: () => <div>Activity Settings Mock</div>,
 }))
 
 vi.mock('../stores/agentStore', () => ({
@@ -94,6 +102,7 @@ vi.mock('../components/chat/CodeViewer', () => ({
 
 describe('Settings > General tab', () => {
   beforeEach(() => {
+    vi.useRealTimers()
     MOCK_DELETE_PROVIDER.mockReset()
     desktopNotificationsMock.getDesktopNotificationPermission.mockReset()
     desktopNotificationsMock.notifyDesktop.mockReset()
@@ -103,6 +112,8 @@ describe('Settings > General tab', () => {
     desktopNotificationsMock.notifyDesktop.mockResolvedValue(true)
     desktopNotificationsMock.requestDesktopNotificationPermission.mockResolvedValue('granted')
     desktopNotificationsMock.openDesktopNotificationSettings.mockResolvedValue(true)
+    clipboardMock.copyTextToClipboard.mockReset()
+    clipboardMock.copyTextToClipboard.mockResolvedValue(true)
     MOCK_GET_SETTINGS.mockResolvedValue({})
     MOCK_UPDATE_SETTINGS.mockResolvedValue({})
     providerStoreState.providers = []
@@ -125,7 +136,15 @@ describe('Settings > General tab', () => {
       thinkingEnabled: true,
       skipWebFetchPreflight: true,
       desktopNotificationsEnabled: true,
+      responseLanguage: '',
       webSearch: { mode: 'auto', tavilyApiKey: '', braveApiKey: '' },
+      h5Access: {
+        enabled: false,
+        tokenPreview: null,
+        allowedOrigins: [],
+        publicBaseUrl: null,
+      },
+      h5AccessError: null,
       setThinkingEnabled: vi.fn().mockImplementation(async (enabled: boolean) => {
         useSettingsStore.setState({ thinkingEnabled: enabled })
       }),
@@ -135,9 +154,16 @@ describe('Settings > General tab', () => {
       setDesktopNotificationsEnabled: vi.fn().mockImplementation(async (enabled: boolean) => {
         useSettingsStore.setState({ desktopNotificationsEnabled: enabled })
       }),
+      setResponseLanguage: vi.fn().mockImplementation(async (language: string) => {
+        useSettingsStore.setState({ responseLanguage: language })
+      }),
       setWebSearch: vi.fn().mockImplementation(async (webSearch) => {
         useSettingsStore.setState({ webSearch })
       }),
+      enableH5Access: vi.fn().mockResolvedValue('h5_default_generated_token'),
+      disableH5Access: vi.fn(),
+      regenerateH5AccessToken: vi.fn().mockResolvedValue('h5_default_regenerated_token'),
+      updateH5AccessSettings: vi.fn(),
     })
 
     useUIStore.setState({ pendingSettingsTab: null })
@@ -167,6 +193,18 @@ describe('Settings > General tab', () => {
     expect(toggle).toBeChecked()
   })
 
+  it('opens the Token usage tab from Settings navigation above Diagnostics', () => {
+    render(<Settings />)
+
+    const usageTab = screen.getByText('Token usage')
+    const diagnosticsTab = screen.getByText('Diagnostics')
+    expect((usageTab.compareDocumentPosition(diagnosticsTab) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+
+    fireEvent.click(usageTab)
+
+    expect(screen.getByText('Activity Settings Mock')).toBeInTheDocument()
+  })
+
   it('lets the user disable WebFetch preflight skipping', () => {
     render(<Settings />)
 
@@ -188,6 +226,22 @@ describe('Settings > General tab', () => {
     fireEvent.click(toggle)
 
     expect(useSettingsStore.getState().setThinkingEnabled).toHaveBeenCalledWith(false)
+  })
+
+  it('uses the shared dropdown for response language', () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    expect(screen.queryByRole('combobox', { name: 'Response Language' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Response Language' })).not.toBeInTheDocument()
+
+    const trigger = screen.getByRole('button', { name: 'Response Language' })
+    expect(trigger).toHaveTextContent('Default (English)')
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: '中文 (Chinese)' }))
+
+    expect(useSettingsStore.getState().setResponseLanguage).toHaveBeenCalledWith('chinese')
   })
 
   it('lets the user disable desktop system notifications', () => {
@@ -217,8 +271,8 @@ describe('Settings > General tab', () => {
       expect(desktopNotificationsMock.requestDesktopNotificationPermission).toHaveBeenCalledTimes(1)
     })
     expect(desktopNotificationsMock.notifyDesktop).toHaveBeenCalledWith({
-      title: 'Claude Code Haha notifications are enabled',
-      body: 'Permission prompts and completed agent replies will now use macOS notifications.',
+      title: 'Claude Code 咪咪 notifications are enabled',
+      body: 'Permission prompts and completed agent replies will now use system notifications.',
     })
   })
 
@@ -234,6 +288,199 @@ describe('Settings > General tab', () => {
 
     await vi.waitFor(() => {
       expect(desktopNotificationsMock.openDesktopNotificationSettings).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('renders the H5 section in a disabled state by default', () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    expect(within(section).getByLabelText('Enable H5 access')).not.toBeChecked()
+    expect(within(section).getByText('Disabled')).toBeInTheDocument()
+  })
+
+  it('places H5 access after the common General settings sections', () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const webSearchTitle = screen.getByRole('heading', { name: 'WebSearch' })
+    const h5Title = screen.getByRole('heading', { name: 'H5 Access' })
+    expect((webSearchTitle.compareDocumentPosition(h5Title) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+  })
+
+  it('enables H5 access from the General settings section', async () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    await act(async () => {
+      fireEvent.click(within(section).getByLabelText('Enable H5 access'))
+    })
+
+    expect(useSettingsStore.getState().enableH5Access).toHaveBeenCalledTimes(1)
+  })
+
+  it('regenerates the H5 token from General settings', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: ['https://phone.example'],
+        publicBaseUrl: 'https://phone.example/app',
+      },
+      regenerateH5AccessToken: vi.fn().mockImplementation(async () => {
+        useSettingsStore.setState({
+          h5Access: {
+            enabled: true,
+            tokenPreview: 'h5d4e5f6',
+            allowedOrigins: ['https://phone.example'],
+            publicBaseUrl: 'https://phone.example/app',
+          },
+        })
+        return 'h5_regenerated_secret_token'
+      }),
+    })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    await act(async () => {
+      fireEvent.click(within(section).getByRole('button', { name: 'Regenerate token' }))
+    })
+
+    expect(useSettingsStore.getState().regenerateH5AccessToken).toHaveBeenCalledTimes(1)
+  })
+
+  it('copies the generated H5 token and clears it after a successful copy', async () => {
+    useSettingsStore.setState({
+      enableH5Access: vi.fn().mockImplementation(async () => {
+        useSettingsStore.setState({
+          h5Access: {
+            enabled: true,
+            tokenPreview: 'h5z1y2x3',
+            allowedOrigins: [],
+            publicBaseUrl: null,
+          },
+        })
+        return 'h5_secret_token'
+      }),
+    })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+
+    await act(async () => {
+      fireEvent.click(within(section).getByLabelText('Enable H5 access'))
+    })
+
+    expect(await within(section).findByText('h5_secret_token')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(within(section).getByRole('button', { name: 'Copy' }))
+    })
+
+    expect(clipboardMock.copyTextToClipboard).toHaveBeenCalledWith('h5_secret_token')
+    expect(within(section).queryByText('h5_secret_token')).not.toBeInTheDocument()
+  })
+
+  it('copies the H5 URL when available', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5url123',
+        allowedOrigins: ['https://phone.example'],
+        publicBaseUrl: 'https://phone.example/app',
+      },
+    })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+
+    await act(async () => {
+      fireEvent.click(within(section).getByRole('button', { name: 'Copy H5 URL' }))
+    })
+
+    expect(clipboardMock.copyTextToClipboard).toHaveBeenCalledWith('https://phone.example/app')
+  })
+
+  it('clears the generated token after the visibility timeout', async () => {
+    vi.useFakeTimers()
+    useSettingsStore.setState({
+      enableH5Access: vi.fn().mockImplementation(async () => {
+        useSettingsStore.setState({
+          h5Access: {
+            enabled: true,
+            tokenPreview: 'h5timeout',
+            allowedOrigins: [],
+            publicBaseUrl: null,
+          },
+        })
+        return 'h5_timeout_token'
+      }),
+    })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+
+    await act(async () => {
+      fireEvent.click(within(section).getByLabelText('Enable H5 access'))
+    })
+
+    expect(within(section).getByText('h5_timeout_token')).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(30_000)
+    })
+
+    expect(within(section).queryByText('h5_timeout_token')).not.toBeInTheDocument()
+  })
+
+  it('shows the H5-specific store error when the H5 settings load failed', () => {
+    useSettingsStore.setState({ h5AccessError: 'H5 unavailable' })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    expect(within(section).getByText('H5 unavailable')).toBeInTheDocument()
+  })
+
+  it('updates H5 public URL and allowed origins from General settings', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: ['https://old.example'],
+        publicBaseUrl: null,
+      },
+    })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    fireEvent.change(within(section).getByLabelText('Public URL'), {
+      target: { value: 'https://phone.example/app' },
+    })
+    fireEvent.change(within(section).getByLabelText('Allowed origins'), {
+      target: { value: 'https://phone.example, https://tablet.example' },
+    })
+
+    await act(async () => {
+      fireEvent.click(within(section).getByRole('button', { name: 'Save H5 settings' }))
+    })
+
+    expect(useSettingsStore.getState().updateH5AccessSettings).toHaveBeenCalledWith({
+      publicBaseUrl: 'https://phone.example/app',
+      allowedOrigins: ['https://phone.example', 'https://tablet.example'],
     })
   })
 
@@ -329,14 +576,20 @@ describe('Settings > Providers tab', () => {
   it('requires confirmation before deleting a provider', async () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getAllByText('Delete')[0]!)
+    await act(async () => {
+      fireEvent.click(screen.getAllByText('Delete')[0]!)
+      await Promise.resolve()
+    })
 
     expect(MOCK_DELETE_PROVIDER).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.getByText('Delete provider "MiniMax-M2.7-highspeed(openai)"? This cannot be undone.')).toBeInTheDocument()
 
     const dialog = screen.getByRole('dialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+      await Promise.resolve()
+    })
 
     expect(MOCK_DELETE_PROVIDER).toHaveBeenCalledWith('provider-1')
   })
@@ -413,7 +666,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'available',
       availableVersion: '0.1.5',
-      releaseNotes: '# Claude Code Haha v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
+      releaseNotes: '# Claude Code 咪咪 v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
       progressPercent: 0,
       downloadedBytes: 0,
       totalBytes: null,
@@ -430,7 +683,7 @@ describe('Settings > About tab', () => {
   it('renders release notes with markdown formatting', async () => {
     render(<Settings />)
 
-    expect(await screen.findByRole('heading', { name: 'Claude Code Haha v0.1.5' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Claude Code 咪咪 v0.1.5' })).toBeInTheDocument()
     expect(screen.getByText('Fixed updater rendering')).toBeInTheDocument()
     expect(screen.getByText('Added markdown support')).toBeInTheDocument()
   })
@@ -439,7 +692,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'downloading',
       availableVersion: '0.1.5',
-      releaseNotes: '# Claude Code Haha v0.1.5',
+      releaseNotes: '# Claude Code 咪咪 v0.1.5',
       progressPercent: 0,
       downloadedBytes: 1536,
       totalBytes: null,

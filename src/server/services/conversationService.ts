@@ -13,6 +13,12 @@ import { ProviderService } from './providerService.js'
 import { sessionService } from './sessionService.js'
 import { diagnosticsService } from './diagnosticsService.js'
 import {
+  isMaterializedWorktreeLaunch,
+  prepareSessionWorkspace,
+  shouldCreateWorktreeForSessionLaunch,
+  type PreparedSessionWorkspace,
+} from './repositoryLaunchService.js'
+import {
   buildClaudeCliArgs,
   resolveClaudeCliLauncher,
 } from '../../utils/desktopBundledCli.js'
@@ -90,8 +96,19 @@ export class ConversationService {
     sdkUrl: string,
     shouldResume: boolean,
     options?: SessionStartOptions,
+    repository?: PreparedSessionWorkspace['repository'],
   ): string[] {
     const dangerousMode = process.env.CLAUDE_DANGEROUS_MODE === '1'
+    const worktreeArgs =
+      !shouldResume && repository?.worktree
+        ? [
+            '--worktree',
+            repository.worktreeSlug || repository.worktreeBranch || repository.branch,
+            '--worktree-base-ref',
+            repository.baseRef,
+          ]
+        : []
+
     return this.resolveCliArgs([
       '--print',
       '--verbose',
@@ -106,6 +123,7 @@ export class ConversationService {
       // server only sees the completed assistant message at turn end.
       '--include-partial-messages',
       ...(shouldResume ? ['--resume', sessionId] : ['--session-id', sessionId]),
+      ...worktreeArgs,
       '--replay-user-messages',
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
@@ -130,6 +148,10 @@ export class ConversationService {
     const shouldResume = !!launchInfo && launchInfo.transcriptMessageCount > 0
     const shouldReplacePlaceholder =
       !!launchInfo && launchInfo.transcriptMessageCount === 0
+    const shouldCreateWorktree =
+      !!launchInfo && shouldCreateWorktreeForSessionLaunch(launchInfo)
+    const hasMaterializedWorktree =
+      !!launchInfo && isMaterializedWorktreeLaunch(launchInfo)
 
     if (this.deletedSessions.has(sessionId)) {
       throw new ConversationStartupError(
@@ -149,15 +171,47 @@ export class ConversationService {
       await sessionService.clearSessionTranscript(sessionId, workDir)
     }
 
+    let launchWorkDir = workDir
+    let launchRepository = launchInfo?.repository
+    if (shouldCreateWorktree && launchRepository?.worktree) {
+      launchWorkDir = launchRepository.requestedWorkDir || launchRepository.repoRoot || workDir
+    } else if (!shouldResume && launchRepository && !hasMaterializedWorktree) {
+      const preparedWorkspace = await prepareSessionWorkspace(
+        workDir,
+        {
+          branch: launchRepository.branch,
+          worktree: false,
+        },
+        sessionId,
+      )
+      launchWorkDir = preparedWorkspace.workDir
+      launchRepository = preparedWorkspace.repository
+    }
+
+    if (!shouldCreateWorktree && launchRepository?.worktree) {
+      launchRepository = {
+        ...launchRepository,
+        worktree: false,
+      }
+    }
+
+    if (!fs.existsSync(launchWorkDir) || !fs.statSync(launchWorkDir).isDirectory()) {
+      throw new ConversationStartupError(
+        `Working directory does not exist or is not a directory: ${launchWorkDir}`,
+        'WORKDIR_INVALID',
+      )
+    }
+
     const args = this.buildSessionCliArgs(
       sessionId,
       sdkUrl,
       shouldResume,
       options,
+      launchRepository,
     )
 
     console.log(
-      `[ConversationService] Starting CLI for ${sessionId}, cwd: ${workDir} (process.cwd()=${process.cwd()}, CALLER_DIR will be pinned to workDir)`,
+      `[ConversationService] Starting CLI for ${sessionId}, cwd: ${launchWorkDir} (process.cwd()=${process.cwd()}, CALLER_DIR will be pinned to workDir)`,
     )
 
     // IMPORTANT (Bug#5): 必须覆盖子进程继承的 CALLER_DIR / PWD。
@@ -170,12 +224,12 @@ export class ConversationService {
     // 工作目录就变成 `/`。把 CALLER_DIR / PWD 显式覆盖成 workDir，preload.ts
     // chdir 后落到正确目录。
     //
-    const childEnv = await this.buildChildEnv(workDir, sdkUrl, options)
+    const childEnv = await this.buildChildEnv(launchWorkDir, sdkUrl, options)
 
     let proc: ReturnType<typeof Bun.spawn>
     try {
       proc = Bun.spawn(args, {
-        cwd: workDir,
+        cwd: launchWorkDir,
         env: childEnv,
         stdin: 'pipe',
         stdout: 'pipe',
@@ -196,7 +250,7 @@ export class ConversationService {
         },
       })
       throw new ConversationStartupError(
-        `Failed to spawn CLI in ${workDir}: ${
+        `Failed to spawn CLI in ${launchWorkDir}: ${
           spawnErr instanceof Error ? spawnErr.message : String(spawnErr)
         }`,
         'CLI_SPAWN_FAILED',
@@ -206,7 +260,7 @@ export class ConversationService {
     const session: SessionProcess = {
       proc,
       outputCallbacks: [],
-      workDir,
+      workDir: launchWorkDir,
       permissionMode: options?.permissionMode || 'default',
       sdkToken: this.getSdkTokenFromUrl(sdkUrl),
       sdkSocket: null,
@@ -264,7 +318,7 @@ export class ConversationService {
           code: startupError.code,
           exitCode: startupExitCode,
           retryable: startupError.retryable,
-          workDir,
+          workDir: launchWorkDir,
           permissionMode: options?.permissionMode || 'default',
           providerId: options?.providerId ?? null,
           model: options?.model ?? null,
@@ -279,8 +333,9 @@ export class ConversationService {
 
     if (shouldReplacePlaceholder || !launchInfo) {
       await sessionService.appendSessionMetadata(sessionId, {
-        workDir,
+        workDir: launchWorkDir,
         customTitle: launchInfo?.customTitle ?? null,
+        repository: launchRepository,
       })
     }
 
@@ -476,6 +531,12 @@ export class ConversationService {
   getSessionWorkDir(sessionId: string): string {
     const session = this.sessions.get(sessionId)
     return session?.workDir || ''
+  }
+
+  updateSessionWorkDir(sessionId: string, workDir: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session || !workDir.trim()) return
+    session.workDir = workDir
   }
 
   getSessionPermissionMode(sessionId: string): string {

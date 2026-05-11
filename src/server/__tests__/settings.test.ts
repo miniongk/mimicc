@@ -2,7 +2,7 @@
  * Unit tests for Settings, Models, and Status APIs
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'bun:test'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -184,6 +184,17 @@ describe('SettingsService', () => {
     expect(settings).toEqual({})
   })
 
+  it('should recover from malformed user settings after an upgrade', async () => {
+    await fs.writeFile(path.join(tmpDir, 'settings.json'), '{not json', 'utf-8')
+
+    const svc = new SettingsService()
+    const settings = await svc.getUserSettings()
+    const files = await fs.readdir(tmpDir)
+
+    expect(settings).toEqual({})
+    expect(files.some((name) => name.startsWith('settings.json.invalid-'))).toBe(true)
+  })
+
   it('should write and read user settings', async () => {
     const svc = new SettingsService()
     await svc.updateUserSettings({ theme: 'dark', model: 'claude-opus-4-7' })
@@ -232,6 +243,19 @@ describe('SettingsService', () => {
   it('should get default permission mode', async () => {
     const svc = new SettingsService()
     const mode = await svc.getPermissionMode()
+    expect(mode).toBe('default')
+  })
+
+  it('should ignore stale invalid permission modes from older installs', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({ defaultMode: 'legacy-yolo' }),
+      'utf-8',
+    )
+
+    const svc = new SettingsService()
+    const mode = await svc.getPermissionMode()
+
     expect(mode).toBe('default')
   })
 
@@ -542,6 +566,19 @@ describe('Models API', () => {
     expect(body.available).toEqual(['low', 'medium', 'high', 'max'])
   })
 
+  it('GET /api/effort should fall back when stored effort is stale', async () => {
+    const settingsSvc = new SettingsService()
+    await settingsSvc.updateUserSettings({ effort: 'turbo' })
+
+    const { req, url, segments } = makeRequest('GET', '/api/effort')
+    const res = await handleModelsApi(req, url, segments)
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.level).toBe('medium')
+    expect(body.available).toEqual(['low', 'medium', 'high', 'max'])
+  })
+
   it('PUT /api/effort should set effort level', async () => {
     const { req, url, segments } = makeRequest('PUT', '/api/effort', { level: 'high' })
     const res = await handleModelsApi(req, url, segments)
@@ -663,5 +700,61 @@ describe('Status API', () => {
     const { req, url, segments } = makeRequest('GET', '/api/status/nonexistent')
     const res = await handleStatusApi(req, url, segments)
     expect(res.status).toBe(404)
+  })
+})
+
+// =============================================================================
+// Activity Stats API
+// =============================================================================
+
+describe('Activity Stats API', () => {
+  let handleApiRequest: typeof import('../router.js').handleApiRequest
+
+  beforeAll(async () => {
+    ;({ handleApiRequest } = await import('../router.js'))
+  })
+
+  beforeEach(async () => {
+    await setup()
+  })
+
+  afterEach(teardown)
+
+  it('GET /api/activity-stats should default to the all range', async () => {
+    const { req, url } = makeRequest('GET', '/api/activity-stats')
+    const res = await handleApiRequest(req, url)
+
+    expect(res.status).toBe(200)
+
+    const body = await res.json()
+    expect(body.range).toBe('all')
+    expect(body.stats.totalSessions).toBe(0)
+    expect(new Date(body.generatedAt).toString()).not.toBe('Invalid Date')
+  })
+
+  it('GET /api/activity-stats/:range should return stats for supported ranges', async () => {
+    for (const range of ['7d', '30d', 'all'] as const) {
+      const { req, url } = makeRequest('GET', `/api/activity-stats/${range}`)
+      const res = await handleApiRequest(req, url)
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.range).toBe(range)
+      expect(body.stats).toBeDefined()
+    }
+  })
+
+  it('should reject non-GET methods', async () => {
+    const { req, url } = makeRequest('POST', '/api/activity-stats')
+    const res = await handleApiRequest(req, url)
+
+    expect(res.status).toBe(405)
+  })
+
+  it('should reject unknown activity stats ranges', async () => {
+    const { req, url } = makeRequest('GET', '/api/activity-stats/90d')
+    const res = await handleApiRequest(req, url)
+
+    expect(res.status).toBe(400)
   })
 })
