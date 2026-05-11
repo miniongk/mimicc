@@ -105,6 +105,7 @@ cp .env.example .env
 | [源码修复记录](docs/reference/fixes.md) | 相对于原始泄露源码的修复内容 |
 | [项目结构](docs/reference/project-structure.md) | 代码目录结构说明 |
 
+<<<<<<< HEAD
 ---
 
 ## 赞助与合作
@@ -169,6 +170,8 @@ cp .env.example .env
 </td>
 </tr>
 </table>
+=======
+>>>>>>> ee6b498547ff23d41bdad1f9a2dcfc8637130533
 
 ---
 
