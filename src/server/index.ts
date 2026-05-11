@@ -64,6 +64,18 @@ function isLocalBrowserOrigin(origin: string | null): boolean {
   }
 }
 
+function isTauriWebViewOrigin(origin: string | null): boolean {
+  if (!origin) return false
+
+  try {
+    const url = new URL(origin)
+    return url.hostname === 'tauri.localhost' ||
+      ((url.protocol === 'tauri:' || url.protocol === 'asset:') && url.hostname === 'localhost')
+  } catch {
+    return false
+  }
+}
+
 function isPrivateNetworkHost(host: string): boolean {
   const normalized = host.trim().replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
 
@@ -93,6 +105,10 @@ function isPrivateNetworkHost(host: string): boolean {
 }
 
 export function canBypassRemoteAuthForLocalBrowser(origin: string | null, requestHost: string): boolean {
+  if (isTauriWebViewOrigin(origin)) {
+    return isLocalServerHost(requestHost)
+  }
+
   return isLocalBrowserOrigin(origin) &&
     (isLocalServerHost(requestHost) || isPrivateNetworkHost(requestHost))
 }

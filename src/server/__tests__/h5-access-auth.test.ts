@@ -176,12 +176,31 @@ describe('remote H5 auth and CORS integration', () => {
     })
   })
 
+  test('allows the Tauri desktop WebView origin to control the local sidecar without H5 token', async () => {
+    const response = await fetch(`${baseUrl}/api/status`, {
+      headers: {
+        Origin: 'http://tauri.localhost',
+      },
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://tauri.localhost')
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'ok',
+    })
+  })
+
   test('only lets localhost WebUI origin bypass H5 auth for loopback or private server hosts', () => {
     expect(canBypassRemoteAuthForLocalBrowser('http://127.0.0.1:5179', '127.0.0.1')).toBe(true)
     expect(canBypassRemoteAuthForLocalBrowser('http://localhost:5179', '192.168.0.102')).toBe(true)
+    expect(canBypassRemoteAuthForLocalBrowser('http://tauri.localhost', '127.0.0.1')).toBe(true)
+    expect(canBypassRemoteAuthForLocalBrowser('tauri://localhost', '127.0.0.1')).toBe(true)
+    expect(canBypassRemoteAuthForLocalBrowser('asset://localhost', '127.0.0.1')).toBe(true)
     expect(canBypassRemoteAuthForLocalBrowser('http://localhost:5179', '10.0.0.5')).toBe(true)
     expect(canBypassRemoteAuthForLocalBrowser('http://localhost:5179', '172.20.1.8')).toBe(true)
     expect(canBypassRemoteAuthForLocalBrowser('http://localhost:5179', 'public.example.com')).toBe(false)
+    expect(canBypassRemoteAuthForLocalBrowser('http://tauri.localhost', 'public.example.com')).toBe(false)
+    expect(canBypassRemoteAuthForLocalBrowser('http://tauri.localhost', '192.168.0.102')).toBe(false)
     expect(canBypassRemoteAuthForLocalBrowser('http://192.168.0.50:5179', '192.168.0.102')).toBe(false)
   })
 
