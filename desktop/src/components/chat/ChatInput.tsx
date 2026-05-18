@@ -17,6 +17,7 @@ import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import { ModelSelector } from '../controls/ModelSelector'
 import type { AttachmentRef } from '../../types/chat'
 import { AttachmentGallery } from './AttachmentGallery'
+import { ComposerDropOverlay } from './ComposerDropOverlay'
 import { ProjectContextChip } from '../shared/ProjectContextChip'
 import { RepositoryLaunchControls } from '../shared/RepositoryLaunchControls'
 import { FileSearchMenu, type FileSearchMenuHandle } from './FileSearchMenu'
@@ -24,6 +25,7 @@ import { LocalSlashCommandPanel, type LocalSlashCommandName } from './LocalSlash
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import {
   FALLBACK_SLASH_COMMANDS,
+  filterSlashCommands,
   findSlashTrigger,
   mergeSlashCommands,
   replaceSlashToken,
@@ -31,21 +33,20 @@ import {
 } from './composerUtils'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import { isTauriRuntime } from '../../lib/desktopRuntime'
+import {
+  filesToComposerAttachments,
+  selectNativeFileAttachments,
+  type ComposerAttachment,
+} from '../../lib/composerAttachments'
+import { useComposerFileDrop } from './useComposerFileDrop'
 
 type GitInfo = SessionGitInfo
 
-type Attachment = {
-  id: string
-  name: string
-  type: 'image' | 'file'
-  path?: string
-  mimeType?: string
-  previewUrl?: string
-  data?: string
-  lineStart?: number
-  lineEnd?: number
-  note?: string
-  quote?: string
+type Attachment = ComposerAttachment
+
+type ComposerDraft = {
+  input: string
+  attachments: Attachment[]
 }
 
 type ChatInputProps = {
@@ -60,7 +61,8 @@ function workspaceReferenceToAttachment(reference: WorkspaceChatReference): Atta
     id: reference.id,
     name: reference.name,
     type: 'file',
-    path: reference.path,
+    path: reference.kind === 'chat-selection' ? undefined : reference.path,
+    isDirectory: reference.isDirectory,
     lineStart: reference.lineStart,
     lineEnd: reference.lineEnd,
     note: reference.note,
@@ -88,11 +90,27 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const [launchTransitioning, setLaunchTransitioning] = useState(false)
   const composingRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
   const slashMenuRef = useRef<HTMLDivElement>(null)
   const fileSearchRef = useRef<FileSearchMenuHandle>(null)
   const slashItemRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const composerDraftsRef = useRef<Record<string, ComposerDraft>>({})
+  const previousActiveTabIdRef = useRef<string | null>(null)
+  const inputRef = useRef(input)
+  const attachmentsRef = useRef(attachments)
+  const setComposerInput = useCallback((value: string) => {
+    inputRef.current = value
+    setInput(value)
+  }, [])
+  const setComposerAttachments = useCallback((value: Attachment[] | ((previous: Attachment[]) => Attachment[])) => {
+    setAttachments((previous) => {
+      const next = typeof value === 'function' ? value(previous) : value
+      attachmentsRef.current = next
+      return next
+    })
+  }, [])
   const { sendMessage, stopGeneration } = useChatStore()
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
@@ -129,6 +147,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const useCompactControls = compact || isMobileComposer
   const iconOnlyAction = compact || isMobileComposer
   const activeLaunchWorkDir = showLaunchControls ? (launchWorkDir || resolvedWorkDir || '') : (resolvedWorkDir || '')
+  const embedLaunchControlsInHero = isHeroComposer && !useCompactControls && showLaunchControls
   const pendingSlashUiAction = !isMemberSession && input.trim().startsWith('/')
     ? resolveSlashUiAction(input.trim().slice(1))
     : null
@@ -146,14 +165,47 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const slashCommandCount = slashCommands.length
 
   useEffect(() => {
+    inputRef.current = input
+  }, [input])
+
+  useEffect(() => {
+    attachmentsRef.current = attachments
+  }, [attachments])
+
+  useEffect(() => {
+    const previousActiveTabId = previousActiveTabIdRef.current
+
+    if (previousActiveTabId === activeTabId) return
+
+    if (previousActiveTabId) {
+      composerDraftsRef.current[previousActiveTabId] = {
+        input: inputRef.current,
+        attachments: attachmentsRef.current,
+      }
+    }
+
+    const nextDraft = activeTabId ? composerDraftsRef.current[activeTabId] : undefined
+    setComposerInput(nextDraft?.input ?? '')
+    setComposerAttachments(nextDraft?.attachments ?? [])
+    setPlusMenuOpen(false)
+    setSlashMenuOpen(false)
+    setFileSearchOpen(false)
+    setLocalSlashPanel(null)
+    setSlashFilter('')
+    setAtFilter('')
+    setAtCursorPos(-1)
+    previousActiveTabIdRef.current = activeTabId
+  }, [activeTabId, setComposerAttachments, setComposerInput])
+
+  useEffect(() => {
     textareaRef.current?.focus()
   }, [isActive])
 
   useEffect(() => {
     if (!composerPrefill) return
 
-    setInput(composerPrefill.text)
-    setAttachments(
+    setComposerInput(composerPrefill.text)
+    setComposerAttachments(
       (composerPrefill.attachments ?? [])
         .filter((attachment) => attachment.type === 'image' || attachment.data)
         .map((attachment, index) => ({
@@ -178,7 +230,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       const cursor = composerPrefill.text.length
       el?.setSelectionRange(cursor, cursor)
     })
-  }, [composerPrefill])
+  }, [composerPrefill, setComposerAttachments, setComposerInput])
 
   const refreshGitInfo = useCallback(() => {
     if (!activeTabId) {
@@ -204,7 +256,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
 
   useEffect(() => {
     if (!isMemberSession) return
-    setAttachments([])
+    setComposerAttachments([])
     setPlusMenuOpen(false)
     setSlashMenuOpen(false)
     setFileSearchOpen(false)
@@ -295,13 +347,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   )
 
   const filteredCommands = useMemo(() => {
-    const source = allSlashCommands
-    if (!slashFilter) return source
-    const lower = slashFilter.toLowerCase()
-    return source.filter((command) => (
-      command.name.toLowerCase().includes(lower) ||
-      command.description.toLowerCase().includes(lower)
-    ))
+    return filterSlashCommands(allSlashCommands, slashFilter)
   }, [allSlashCommands, slashFilter])
 
   const exactSlashCommand = useMemo(() => {
@@ -370,11 +416,11 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = event.target.value
     if (isMemberSession) {
-      setInput(value)
+      setComposerInput(value)
       return
     }
     const cursorPos = event.target.selectionStart ?? value.length
-    setInput(value)
+    setComposerInput(value)
     detectSlashTrigger(value, cursorPos)
     detectAtTrigger(value, cursorPos)
   }
@@ -384,7 +430,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     if (!el) return
     const cursorPos = el.selectionStart ?? input.length
     const replacement = replaceSlashToken(input, cursorPos, command)
-    setInput(replacement.value)
+    setComposerInput(replacement.value)
     setSlashMenuOpen(false)
     requestAnimationFrame(() => {
       el.focus()
@@ -439,7 +485,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
 
     if (pendingSlashUiAction?.type === 'panel') {
       setLocalSlashPanel(pendingSlashUiAction.command as LocalSlashCommandName)
-      setInput('')
+      setComposerInput('')
       setSlashMenuOpen(false)
       setFileSearchOpen(false)
       setPlusMenuOpen(false)
@@ -449,7 +495,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     if (pendingSlashUiAction?.type === 'settings') {
       useUIStore.getState().setPendingSettingsTab(pendingSlashUiAction.tab)
       useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings')
-      setInput('')
+      setComposerInput('')
       setSlashMenuOpen(false)
       setFileSearchOpen(false)
       setPlusMenuOpen(false)
@@ -464,7 +510,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     const contentForModel = [workspaceReferencePrompt, text].filter(Boolean).join('\n\n')
     const displayContent = text || (
       workspaceReferences.length > 0
-        ? t('chat.workspaceReferencesOnly', { count: workspaceReferences.length })
+        ? t('chat.contextReferencesOnly', { count: workspaceReferences.length })
         : ''
     )
     const uploadAttachmentPayload: AttachmentRef[] = attachments.map((attachment) => ({
@@ -478,21 +524,25 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       note: attachment.note,
       quote: attachment.quote,
     }))
-    const workspaceAttachmentPayload: AttachmentRef[] = workspaceReferences.map((reference) => ({
-      type: 'file' as const,
-      name: reference.name,
-      path: reference.absolutePath ?? reference.path,
-      lineStart: reference.lineStart,
-      lineEnd: reference.lineEnd,
-      note: reference.note,
-      quote: reference.quote,
-    }))
+    const workspaceAttachmentPayload: AttachmentRef[] = workspaceReferences
+      .filter((reference) => reference.kind !== 'chat-selection')
+      .map((reference) => ({
+        type: 'file' as const,
+        name: reference.name,
+        path: reference.absolutePath ?? reference.path,
+        isDirectory: reference.isDirectory,
+        lineStart: reference.lineStart,
+        lineEnd: reference.lineEnd,
+        note: reference.note,
+        quote: reference.quote,
+      }))
     const visibleAttachmentPayload: AttachmentRef[] = [
       ...uploadAttachmentPayload,
       ...workspaceReferences.map((reference) => ({
         type: 'file' as const,
         name: reference.name,
-        path: reference.path,
+        path: reference.kind === 'chat-selection' ? undefined : reference.path,
+        isDirectory: reference.isDirectory,
         lineStart: reference.lineStart,
         lineEnd: reference.lineEnd,
         note: reference.note,
@@ -530,8 +580,8 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       displayContent,
       displayAttachments: visibleAttachmentPayload,
     })
-    setInput('')
-    setAttachments([])
+    setComposerInput('')
+    setComposerAttachments([])
     if (!isMemberSession) {
       clearWorkspaceReferences(activeTabId!)
       if (targetSessionId !== activeTabId) clearWorkspaceReferences(targetSessionId)
@@ -549,7 +599,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     // Route file search navigation keys to FileSearchMenu
     if (fileSearchOpen) {
       const key = event.key
-      if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Enter' || key === 'Tab' || key === 'Escape') {
+      if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'ArrowRight' || key === 'Enter' || key === 'Tab' || key === 'Escape') {
         event.preventDefault()
         if (key === 'Escape') {
           setFileSearchOpen(false)
@@ -631,7 +681,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       const id = `att-${Date.now()}-${Math.random().toString(36).slice(2)}`
       const reader = new FileReader()
       reader.onload = () => {
-        setAttachments((prev) => [
+        setComposerAttachments((prev) => [
           ...prev,
           {
             id,
@@ -649,46 +699,62 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     if (!hasImage) return
   }
 
+  const appendFiles = useCallback((files: FileList | File[]) => {
+    void filesToComposerAttachments(files)
+      .then((nextAttachments) => {
+        if (nextAttachments.length === 0) return
+        setComposerAttachments((prev) => [...prev, ...nextAttachments])
+      })
+      .catch((error) => {
+        console.warn('[attachments] Failed to read selected files', error)
+      })
+  }, [setComposerAttachments])
+
+  const appendAttachments = useCallback((nextAttachments: Attachment[]) => {
+    if (nextAttachments.length === 0) return
+    setComposerAttachments((prev) => [...prev, ...nextAttachments])
+  }, [setComposerAttachments])
+
+  const { isDragActive, dragHandlers } = useComposerFileDrop({
+    disabled: isMemberSession || isWorkspaceMissing,
+    panelRef,
+    onAttachments: appendAttachments,
+    onError: (error) => {
+      console.warn('[attachments] Failed to read dropped files', error)
+    },
+  })
+
+  const openAttachmentPicker = useCallback(() => {
+    if (!isTauriRuntime()) {
+      fileInputRef.current?.click()
+      setPlusMenuOpen(false)
+      return
+    }
+
+    void selectNativeFileAttachments()
+      .then((nativeAttachments) => {
+        if (nativeAttachments) {
+          if (nativeAttachments.length > 0) {
+            setComposerAttachments((prev) => [...prev, ...nativeAttachments])
+          }
+          return
+        }
+        fileInputRef.current?.click()
+      })
+      .finally(() => setPlusMenuOpen(false))
+  }, [setComposerAttachments])
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (isMemberSession) return
     const files = event.target.files
     if (!files) return
 
-    Array.from(files).forEach((file) => {
-      const id = `att-${Date.now()}-${Math.random().toString(36).slice(2)}`
-      const isImage = file.type.startsWith('image/')
-      const reader = new FileReader()
-      reader.onload = () => {
-        setAttachments((prev) => [
-          ...prev,
-          {
-            id,
-            name: file.name,
-            type: isImage ? 'image' : 'file',
-            mimeType: file.type || undefined,
-            previewUrl: isImage ? (reader.result as string) : undefined,
-            data: reader.result as string,
-          },
-        ])
-      }
-      reader.readAsDataURL(file)
-    })
-
+    appendFiles(files)
     event.target.value = ''
   }
 
-  const handleDrop = (event: React.DragEvent) => {
-    event.preventDefault()
-    if (isMemberSession) return
-    const files = event.dataTransfer.files
-    if (files.length > 0) {
-      const fakeEvent = { target: { files } } as React.ChangeEvent<HTMLInputElement>
-      handleFileSelect(fakeEvent)
-    }
-  }
-
   const removeAttachment = (id: string) => {
-    setAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
+    setComposerAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
     if (activeTabId) removeWorkspaceReference(activeTabId, id)
   }
 
@@ -697,7 +763,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     const el = textareaRef.current
     const cursorPos = el?.selectionStart ?? input.length
     const replacement = replaceSlashToken(input, cursorPos, '', { trailingSpace: false })
-    setInput(replacement.value)
+    setComposerInput(replacement.value)
     setPlusMenuOpen(false)
     setSlashFilter('')
     setSlashMenuOpen(true)
@@ -740,15 +806,23 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
         }
       >
         <div
+          ref={panelRef}
           data-testid="chat-input-panel"
           className={isHeroComposer
-            ? 'glass-panel relative flex flex-col gap-3 rounded-t-xl rounded-b-none p-4 transition-colors'
+            ? `glass-panel relative flex flex-col gap-3 overflow-visible ${embedLaunchControlsInHero ? 'rounded-xl' : 'rounded-t-xl rounded-b-none'} p-4 transition-colors ${isDragActive ? 'composer-drop-target-active' : ''}`
             : compact
-              ? `glass-panel relative p-3 transition-colors ${isMobileComposer ? 'rounded-2xl shadow-[0_-12px_36px_rgba(54,35,28,0.12)]' : 'rounded-xl'}`
-              : `glass-panel relative transition-colors ${isMobileComposer ? 'rounded-2xl p-3 shadow-[0_-12px_36px_rgba(54,35,28,0.12)]' : 'rounded-xl p-4'}`}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={handleDrop}
+              ? `glass-panel relative overflow-visible p-3 transition-colors ${isMobileComposer ? 'rounded-2xl shadow-[0_-12px_36px_rgba(54,35,28,0.12)]' : 'rounded-xl'} ${isDragActive ? 'composer-drop-target-active' : ''}`
+              : `glass-panel relative overflow-visible transition-colors ${isMobileComposer ? 'rounded-2xl p-3 shadow-[0_-12px_36px_rgba(54,35,28,0.12)]' : 'rounded-xl p-4'} ${isDragActive ? 'composer-drop-target-active' : ''}`}
+          {...dragHandlers}
         >
+          {isDragActive && (
+            <ComposerDropOverlay
+              testId="chat-input-drop-overlay"
+              title={t('chat.dropFilesTitle')}
+              description={t('chat.dropFilesHint')}
+            />
+          )}
+
           {!isMemberSession && fileSearchOpen && (
             <FileSearchMenu
               ref={fileSearchRef}
@@ -761,14 +835,14 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                 const tokenEnd = atCursorPos + 1 + atFilter.length
                 const newValue = `${input.slice(0, atCursorPos)}${replacement}${input.slice(tokenEnd)}`
                 const newCursorPos = atCursorPos + replacement.length
-                setInput(newValue)
+                setComposerInput(newValue)
                 setAtFilter(relativePath)
                 requestAnimationFrame(() => {
                   textareaRef.current?.focus()
                   textareaRef.current?.setSelectionRange(newCursorPos, newCursorPos)
                 })
               }}
-              onSelect={(path, name) => {
+              onSelect={(path, name, isDirectory) => {
                 if (atCursorPos >= 0) {
                   const referenceName = name.split('/').filter(Boolean).pop() ?? name
                   const tokenEnd = atCursorPos + 1 + atFilter.length
@@ -782,10 +856,11 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                       kind: 'file',
                       path,
                       absolutePath: path,
-                      name: referenceName,
+                      name: isDirectory ? `${referenceName}/` : referenceName,
+                      isDirectory,
                     })
                   }
-                  setInput(newValue)
+                  setComposerInput(newValue)
                   setFileSearchOpen(false)
                   setAtFilter('')
                   setAtCursorPos(-1)
@@ -828,8 +903,15 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                         : 'hover:bg-[var(--color-surface-hover)]'
                     }`}
                   >
-                    <span className="shrink-0 text-sm font-semibold text-[var(--color-text-primary)]">
-                      /{command.name}
+                    <span className="flex min-w-0 max-w-[52%] shrink-0 items-baseline gap-1.5">
+                      <span className="shrink-0 text-sm font-semibold text-[var(--color-text-primary)]">
+                        /{command.name}
+                      </span>
+                      {command.argumentHint ? (
+                        <span className="min-w-0 truncate font-mono text-[11px] text-[var(--color-text-tertiary)]">
+                          {command.argumentHint}
+                        </span>
+                      ) : null}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-tertiary)]">
                       {command.description}
@@ -914,10 +996,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                     {plusMenuOpen && (
                       <div className={`absolute bottom-full left-0 z-50 mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] py-1 shadow-[var(--shadow-dropdown)] ${isMobileComposer ? 'w-[min(240px,calc(100vw-32px))]' : 'w-[240px]'}`}>
                         <button
-                          onClick={() => {
-                            fileInputRef.current?.click()
-                            setPlusMenuOpen(false)
-                          }}
+                          onClick={openAttachmentPicker}
                           className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-hover)]"
                         >
                           <span className="material-symbols-outlined text-[18px] text-[var(--color-text-secondary)]">attach_file</span>
@@ -981,11 +1060,27 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
               </button>
             </div>
           </div>
+
+          {embedLaunchControlsInHero && (
+            <div className="-mx-4 -mb-4 mt-3">
+              <RepositoryLaunchControls
+                workDir={activeLaunchWorkDir}
+                onWorkDirChange={handleLaunchWorkDirChange}
+                branch={launchBranch}
+                onBranchChange={setLaunchBranch}
+                useWorktree={launchUseWorktree}
+                onUseWorktreeChange={setLaunchUseWorktree}
+                onLaunchReadyChange={setLaunchReady}
+                disabled={isActive || launchTransitioning}
+                placement="composer"
+              />
+            </div>
+          )}
         </div>
 
         <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
 
-        {!isMemberSession && (
+        {!isMemberSession && !embedLaunchControlsInHero && (
           <div className={useCompactControls ? 'mt-2 flex min-w-0 px-1' : 'mt-3 px-1'}>
             {messageCount > 0 ? (
               <ProjectContextChip

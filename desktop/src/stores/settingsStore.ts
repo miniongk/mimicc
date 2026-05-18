@@ -3,11 +3,25 @@ import { ApiError } from '../api/client'
 import { settingsApi } from '../api/settings'
 import { modelsApi } from '../api/models'
 import { h5AccessApi } from '../api/h5Access'
-import type { H5AccessSettings, PermissionMode, EffortLevel, ModelInfo, ThemeMode, WebSearchSettings } from '../types/settings'
+import { isThemeMode, type H5AccessSettings, type PermissionMode, type EffortLevel, type ModelInfo, type ThemeMode, type WebSearchSettings, type AppMode, type AppModeConfig } from '../types/settings'
+import { isTauriRuntime } from '../lib/desktopRuntime'
 import type { Locale } from '../i18n'
+import {
+  APP_ZOOM_CONTROL_STEP,
+  DEFAULT_APP_ZOOM,
+  MAX_APP_ZOOM,
+  MIN_APP_ZOOM,
+  applyAppZoomLevel,
+  normalizeAppZoomLevel,
+  readStoredAppZoomLevel,
+} from '../lib/appZoom'
 import { useUIStore } from './uiStore'
 
 const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+export const UI_ZOOM_MIN = MIN_APP_ZOOM
+export const UI_ZOOM_MAX = MAX_APP_ZOOM
+export const UI_ZOOM_STEP = APP_ZOOM_CONTROL_STEP
+export const UI_ZOOM_DEFAULT = DEFAULT_APP_ZOOM
 let desktopNotificationsSaveQueue: Promise<void> = Promise.resolve()
 
 function getStoredLocale(): Locale {
@@ -33,8 +47,12 @@ type SettingsStore = {
   h5Access: H5AccessSettings
   h5AccessError: string | null
   responseLanguage: string
+  uiZoom: number
   isLoading: boolean
   error: string | null
+
+  appMode: AppModeConfig
+  appModeRequiresRestart: boolean
 
   fetchAll: () => Promise<void>
   fetchH5Access: () => Promise<void>
@@ -55,6 +73,9 @@ type SettingsStore = {
     publicBaseUrl?: string | null
   }) => Promise<void>
   setResponseLanguage: (language: string) => Promise<void>
+  fetchAppMode: () => Promise<void>
+  setAppMode: (mode: AppMode, portableDir?: string | null) => Promise<void>
+  setUiZoom: (zoom: number) => void
 }
 
 const DEFAULT_H5_ACCESS_SETTINGS: H5AccessSettings = {
@@ -79,8 +100,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   h5Access: DEFAULT_H5_ACCESS_SETTINGS,
   h5AccessError: null,
   responseLanguage: '',
+  uiZoom: readStoredAppZoomLevel(),
   isLoading: false,
   error: null,
+
+  appMode: { mode: 'default', portableDir: null, defaultPortableDir: null },
+  appModeRequiresRestart: false,
+  setUiZoom: (zoom: number) => {
+    const level = normalizeAppZoomLevel(zoom)
+    set({ uiZoom: level })
+    void applyAppZoomLevel(level)
+  },
 
   fetchAll: async () => {
     set({ isLoading: true, error: null })
@@ -94,7 +124,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         settingsApi.getUser(),
         loadH5AccessSettings(previousH5Access),
       ])
-      const theme = userSettings.theme === 'dark' ? 'dark' : 'light'
+      const theme = isThemeMode(userSettings.theme) ? userSettings.theme : 'white'
       useUIStore.getState().setTheme(theme)
       set({
         permissionMode: mode,
@@ -156,7 +186,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const prev = get().thinkingEnabled
     set({ thinkingEnabled: enabled })
     try {
-      await settingsApi.updateUser({ alwaysThinkingEnabled: enabled ? undefined : false })
+      await settingsApi.updateUser({ alwaysThinkingEnabled: enabled })
     } catch {
       set({ thinkingEnabled: prev })
     }
@@ -286,6 +316,37 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await settingsApi.updateUser({ language: language || undefined })
     } catch {
       set({ responseLanguage: prev })
+    }
+  },
+
+  fetchAppMode: async () => {
+    if (!isTauriRuntime()) return
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const result: AppModeConfig = await invoke('get_app_mode')
+      set({ appMode: result })
+    } catch { /* silently ignore - not in Tauri or command unavailable */ }
+  },
+
+  setAppMode: async (mode, portableDir) => {
+    if (!isTauriRuntime()) return
+    const prev = get().appMode
+    const newMode: AppModeConfig = {
+      ...prev,
+      mode,
+      portableDir: mode === 'portable'
+        ? portableDir ?? prev.defaultPortableDir ?? prev.portableDir
+        : null,
+    }
+    set({ appMode: newMode, appModeRequiresRestart: true })
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      await invoke('set_app_mode', {
+        mode,
+        portableDir: newMode.portableDir || null,
+      })
+    } catch {
+      set({ appMode: prev, appModeRequiresRestart: false })
     }
   },
 }))

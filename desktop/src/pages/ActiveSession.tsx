@@ -363,10 +363,10 @@ export function ActiveSession() {
                   className={
                     showWorkspacePanel
                       ? 'flex w-full items-center border-b border-[var(--color-border)]/70 px-4 py-3'
-                      : 'mx-auto flex w-full max-w-[860px] items-center border-b border-outline-variant/10 px-8 py-3'
+                      : 'w-full border-b border-outline-variant/10 px-4 py-3'
                   }
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className={showWorkspacePanel ? 'min-w-0 flex-1' : 'mx-auto w-full max-w-[860px] min-w-0'}>
                     <h1
                       className={
                         showWorkspacePanel
