@@ -61,6 +61,13 @@ describe('TerminalSettings', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     useSettingsStore.setState({ locale: 'en' })
+    useSettingsStore.setState({
+      desktopTerminal: {
+        startupShell: 'system',
+        customShellPath: '',
+      },
+      setDesktopTerminal: vi.fn().mockResolvedValue(undefined),
+    })
     terminalMocks.available = false
     terminalMocks.spawn.mockReset()
     terminalMocks.write.mockReset()
@@ -153,12 +160,25 @@ describe('TerminalSettings', () => {
     expect(terminalMocks.terminalInstance.write).not.toHaveBeenCalledWith('ignored\r\n')
   })
 
+  it('shows Windows-only startup shell controls in settings mode', () => {
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      platform: 'Win32',
+      userAgent: 'Windows',
+    })
+
+    render(<TerminalSettings showPreferences />)
+
+    expect(screen.getAllByText('Startup shell')).toHaveLength(2)
+    expect(screen.getByText('Use for new terminal sessions and after restart.')).toBeInTheDocument()
+  })
+
   it('saves a custom Windows bash path from the terminal settings panel', async () => {
     vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32')
     terminalMocks.available = true
     terminalMocks.getBashPath.mockResolvedValue('C:\\Program Files\\Git\\bin\\bash.exe')
 
-    render(<TerminalSettings />)
+    render(<TerminalSettings showPreferences />)
 
     const input = await screen.findByDisplayValue('C:\\Program Files\\Git\\bin\\bash.exe')
     fireEvent.change(input, { target: { value: ' C:\\Tools\\Git\\bin\\bash.exe ' } })
@@ -175,7 +195,7 @@ describe('TerminalSettings', () => {
     terminalMocks.available = true
     terminalMocks.setBashPath.mockRejectedValue(new Error('terminal bash path does not exist'))
 
-    render(<TerminalSettings />)
+    render(<TerminalSettings showPreferences />)
 
     const input = await screen.findByPlaceholderText('Bash Path')
     fireEvent.change(input, { target: { value: 'C:\\missing\\bash.exe' } })

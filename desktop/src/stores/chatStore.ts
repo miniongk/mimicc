@@ -10,6 +10,7 @@ import { randomSpinnerVerb } from '../config/spinnerVerbs'
 import { notifyDesktop } from '../lib/desktopNotifications'
 import { deriveSessionTitle, isPlaceholderSessionTitle } from '../lib/sessionTitle'
 import { AGENT_LIFECYCLE_TYPES } from '../types/team'
+import type { ComposerAttachment } from '../lib/composerAttachments'
 import type { MessageEntry } from '../types/session'
 import type { PermissionMode } from '../types/settings'
 import type { RuntimeSelection } from '../types/runtime'
@@ -31,6 +32,11 @@ import type {
 } from '../types/chat'
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+
+export type ComposerDraftState = {
+  input: string
+  attachments: ComposerAttachment[]
+}
 
 export type PerSessionState = {
   messages: UIMessage[]
@@ -65,6 +71,7 @@ export type PerSessionState = {
     attachments?: UIAttachment[]
     nonce: number
   } | null
+  composerDraft?: ComposerDraftState | null
 }
 
 const DEFAULT_SESSION_STATE: PerSessionState = {
@@ -87,6 +94,7 @@ const DEFAULT_SESSION_STATE: PerSessionState = {
   activeGoal: null,
   elapsedTimer: null,
   composerPrefill: null,
+  composerDraft: null,
 }
 
 function createDefaultSessionState(): PerSessionState {
@@ -128,12 +136,15 @@ type ChatStore = {
     sessionId: string,
     prefill: { text: string; attachments?: UIAttachment[] },
   ) => void
+  setComposerDraft: (sessionId: string, draft: ComposerDraftState) => void
+  clearComposerDraft: (sessionId: string) => void
   clearMessages: (sessionId: string) => void
   handleServerMessage: (sessionId: string, msg: ServerMessage) => void
 }
 
 const TASK_TOOL_NAMES = new Set(['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TodoWrite'])
 const pendingTaskToolUseIdsBySession = new Map<string, Set<string>>()
+const pendingToolParentUseIdsBySession = new Map<string, Map<string, string>>()
 
 function addPendingTaskToolUseId(sessionId: string, toolUseId: string): void {
   const ids = pendingTaskToolUseIdsBySession.get(sessionId) ?? new Set<string>()
@@ -151,6 +162,34 @@ function consumePendingTaskToolUseId(sessionId: string, toolUseId: string): bool
 
 function clearPendingTaskToolUseIds(sessionId: string): void {
   pendingTaskToolUseIdsBySession.delete(sessionId)
+}
+
+function rememberPendingToolParentUseId(
+  sessionId: string,
+  toolUseId: string | null | undefined,
+  parentToolUseId: string | undefined,
+): void {
+  if (!toolUseId || !parentToolUseId) return
+  const parentUseIds = pendingToolParentUseIdsBySession.get(sessionId) ?? new Map<string, string>()
+  parentUseIds.set(toolUseId, parentToolUseId)
+  pendingToolParentUseIdsBySession.set(sessionId, parentUseIds)
+}
+
+function getPendingToolParentUseId(sessionId: string, toolUseId: string): string | undefined {
+  return pendingToolParentUseIdsBySession.get(sessionId)?.get(toolUseId)
+}
+
+function consumePendingToolParentUseId(sessionId: string, toolUseId: string): string | undefined {
+  const parentUseIds = pendingToolParentUseIdsBySession.get(sessionId)
+  if (!parentUseIds) return undefined
+  const parentToolUseId = parentUseIds.get(toolUseId)
+  parentUseIds.delete(toolUseId)
+  if (parentUseIds.size === 0) pendingToolParentUseIdsBySession.delete(sessionId)
+  return parentToolUseId
+}
+
+function clearPendingToolParentUseIds(sessionId: string): void {
+  pendingToolParentUseIdsBySession.delete(sessionId)
 }
 const AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS = 160
 
@@ -224,10 +263,17 @@ function upsertBackgroundTaskMessage(
   task: BackgroundAgentTask,
   timestamp: number,
 ): UIMessage[] {
-  const existingIndex = messages.findIndex((message) =>
+  const isSameTaskMessage = (message: UIMessage) =>
     message.type === 'background_task' &&
     (message.task.taskId === task.taskId ||
-      (task.toolUseId && message.task.toolUseId === task.toolUseId)))
+      (task.toolUseId && message.task.toolUseId === task.toolUseId))
+
+  if (isAgentBackgroundTask(task)) {
+    return messages.filter((message) => !isSameTaskMessage(message))
+  }
+
+  const existingIndex = messages.findIndex((message) =>
+    isSameTaskMessage(message))
   if (existingIndex === -1) {
     return [...messages, {
       id: `background-task-${task.taskId}`,
@@ -252,6 +298,15 @@ function mergeBackgroundTaskMessages(
     messages,
   )
   return [...merged].sort((a, b) => a.timestamp - b.timestamp)
+}
+
+function isAgentBackgroundTask(task: Pick<BackgroundAgentTask, 'taskType' | 'summary'>): boolean {
+  if (task.taskType === 'local_agent' || task.taskType === 'remote_agent') {
+    return true
+  }
+  return /^Agent (?:(?:"[^"]+" )?(completed|was stopped)|(?:"[^"]+" )?failed(?::|$))/.test(
+    task.summary ?? '',
+  )
 }
 
 function mergeRestoredTerminalGoalEvents(
@@ -331,6 +386,41 @@ function updateSessionIn(
   return { ...sessions, [sessionId]: { ...session, ...updater(session) } }
 }
 
+type SlashCommandState = PerSessionState['slashCommands'][number]
+
+function normalizeSlashCommand(command: unknown): SlashCommandState | null {
+  if (!command || typeof command !== 'object') return null
+  const candidate = command as { name?: unknown; description?: unknown; argumentHint?: unknown }
+  if (typeof candidate.name !== 'string' || !candidate.name) return null
+  return {
+    name: candidate.name,
+    description: typeof candidate.description === 'string' ? candidate.description : '',
+    ...(typeof candidate.argumentHint === 'string' && candidate.argumentHint
+      ? { argumentHint: candidate.argumentHint }
+      : {}),
+  }
+}
+
+function normalizeSlashCommandList(commands: ReadonlyArray<unknown>): SlashCommandState[] {
+  return commands
+    .map(normalizeSlashCommand)
+    .filter((command): command is SlashCommandState => command !== null)
+}
+
+function mergeSlashCommandUpdates(
+  current: ReadonlyArray<SlashCommandState>,
+  incoming: ReadonlyArray<SlashCommandState>,
+): SlashCommandState[] {
+  const merged = new Map<string, SlashCommandState>()
+  for (const command of current) {
+    if (command.name) merged.set(command.name, command)
+  }
+  for (const command of incoming) {
+    if (command.name) merged.set(command.name, command)
+  }
+  return [...merged.values()]
+}
+
 async function fetchAndMapSessionHistory(sessionId: string) {
   const { messages, taskNotifications } = await sessionsApi.getMessages(sessionId)
   const uiMessages = mapHistoryMessagesToUiMessages(messages)
@@ -368,6 +458,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           connectionState: 'connecting',
           messages: existing?.messages ?? [],
           activeGoal: existing?.activeGoal ?? null,
+          composerDraft: existing?.composerDraft ?? null,
         },
       },
     }))
@@ -411,6 +502,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, (sess) => ({ streamingText: sess.streamingText + text })) }))
     }
     clearPendingTaskToolUseIds(sessionId)
+    clearPendingToolParentUseIds(sessionId)
     wsManager.disconnect(sessionId)
     set((s) => {
       const { [sessionId]: _, ...rest } = s.sessions
@@ -703,8 +795,32 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }))
   },
 
+  setComposerDraft: (sessionId, draft) => {
+    set((state) => {
+      const session = state.sessions[sessionId] ?? createDefaultSessionState()
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            composerDraft: draft,
+          },
+        },
+      }
+    })
+  },
+
+  clearComposerDraft: (sessionId) => {
+    set((state) => ({
+      sessions: updateSessionIn(state.sessions, sessionId, () => ({
+        composerDraft: null,
+      })),
+    }))
+  },
+
   clearMessages: (sessionId) => {
     clearPendingTaskToolUseIds(sessionId)
+    clearPendingToolParentUseIds(sessionId)
     set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({ messages: [], activeGoal: null, streamingText: '', chatState: 'idle' })) }))
   },
 
@@ -730,9 +846,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const shouldFlush = hasPendingStreamText && msg.state === 'idle'
           return {
             chatState: preserveStreamingTurn ? 'streaming' : msg.state,
-            ...(msg.verb && msg.verb !== 'Thinking' ? { statusVerb: msg.verb } : {}),
+            statusVerb: msg.state === 'idle'
+              ? ''
+              : msg.verb && msg.verb !== 'Thinking'
+                ? msg.verb
+                : '',
             ...(msg.tokens ? { tokenUsage: { ...session.tokenUsage, output_tokens: msg.tokens } } : {}),
-            ...(msg.state === 'idle' ? { activeThinkingId: null, statusVerb: '' } : {}),
+            ...(msg.state === 'idle' ? { activeThinkingId: null } : {}),
             ...(shouldFlush ? {
               messages: appendAssistantTextMessage(session.messages, pendingText, Date.now()),
               streamingText: '',
@@ -767,6 +887,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             activeThinkingId: null,
           }))
         } else if (msg.blockType === 'tool_use') {
+          rememberPendingToolParentUseId(sessionId, msg.toolUseId, msg.parentToolUseId)
           update(() => ({
             activeToolUseId: msg.toolUseId ?? null,
             activeToolName: msg.toolName ?? null,
@@ -820,11 +941,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'tool_use_complete': {
         const session = get().sessions[sessionId]
         const toolName = msg.toolName || session?.activeToolName || 'unknown'
+        const toolUseId = msg.toolUseId || session?.activeToolUseId || ''
+        const parentToolUseId = msg.parentToolUseId ?? getPendingToolParentUseId(sessionId, toolUseId)
+        rememberPendingToolParentUseId(sessionId, toolUseId, parentToolUseId)
         update((s) => ({
           messages: [...s.messages, {
             id: nextId(), type: 'tool_use', toolName,
-            toolUseId: msg.toolUseId || s.activeToolUseId || '',
-            input: msg.input, timestamp: Date.now(), parentToolUseId: msg.parentToolUseId,
+            toolUseId,
+            input: msg.input, timestamp: Date.now(), parentToolUseId,
           }],
           activeToolUseId: null, activeToolName: null, activeThinkingId: null, streamingToolInput: '',
         }))
@@ -837,11 +961,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
       }
 
-      case 'tool_result':
+      case 'tool_result': {
+        const pendingParentToolUseId = consumePendingToolParentUseId(sessionId, msg.toolUseId)
+        const parentToolUseId = msg.parentToolUseId ?? pendingParentToolUseId
         update((s) => ({
           messages: [...s.messages, {
             id: nextId(), type: 'tool_result', toolUseId: msg.toolUseId,
-            content: msg.content, isError: msg.isError, timestamp: Date.now(), parentToolUseId: msg.parentToolUseId,
+            content: msg.content, isError: msg.isError, timestamp: Date.now(), parentToolUseId,
           }],
           chatState: 'thinking', activeThinkingId: null,
         }))
@@ -849,6 +975,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           useCLITaskStore.getState().refreshTasks(sessionId)
         }
         break
+      }
 
       case 'permission_request':
         notifyDesktop({
@@ -992,7 +1119,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
       case 'system_notification':
         if (msg.subtype === 'slash_commands' && Array.isArray(msg.data)) {
-          update(() => ({ slashCommands: msg.data as Array<{ name: string; description: string; argumentHint?: string }> }))
+          const incomingCommands = normalizeSlashCommandList(msg.data)
+          update((session) => ({
+            slashCommands: mergeSlashCommandUpdates(session.slashCommands, incomingCommands),
+          }))
+          void sessionsApi.getSlashCommands(sessionId)
+            .then(({ commands }) => {
+              if (!get().sessions[sessionId]) return
+              set((s) => ({
+                sessions: updateSessionIn(s.sessions, sessionId, () => ({
+                  slashCommands: normalizeSlashCommandList(commands),
+                })),
+              }))
+            })
+            .catch(() => {
+              // Keep the last known local + CLI union when the authoritative refresh is unavailable.
+            })
         }
         if (msg.subtype === 'session_cleared') {
           const session = get().sessions[sessionId]
@@ -1018,6 +1160,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }))
           clearPendingDelta(sessionId)
           clearPendingTaskToolUseIds(sessionId)
+          clearPendingToolParentUseIds(sessionId)
           useCLITaskStore.getState().clearTasks(sessionId)
           useSessionStore.getState().updateSessionTitle(sessionId, 'New Session')
           useTabStore.getState().updateTabTitle(sessionId, 'New Session')
@@ -1099,6 +1242,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             typeof data.tool_use_id === 'string' && data.tool_use_id.trim()
               ? data.tool_use_id
               : null
+          const taskResult = readNonEmptyString(data, 'result')
           const taskStatus = data.status
           if (taskEvent) {
             const now = Date.now()
@@ -1124,6 +1268,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                           toolUseId,
                           status: taskStatus,
                           summary: taskEvent.summary,
+                          result: taskResult,
                           outputFile: taskEvent.outputFile,
                           usage: taskEvent.usage,
                         },
@@ -1443,12 +1588,14 @@ function extractTaskNotification(content: unknown): AgentTaskNotification | null
 
   const taskId = readXmlTag(xml, 'task-id') || toolUseId
   const summary = readXmlTag(xml, 'summary')
+  const result = readXmlTag(xml, 'result')
   const outputFile = readXmlTag(xml, 'output-file')
   return {
     taskId,
     toolUseId,
     status,
     ...(summary ? { summary } : {}),
+    ...(result ? { result } : {}),
     ...(outputFile ? { outputFile } : {}),
   }
 }

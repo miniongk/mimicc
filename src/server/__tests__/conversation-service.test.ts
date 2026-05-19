@@ -4,6 +4,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ConversationService } from '../services/conversationService.js'
 import { ProviderService } from '../services/providerService.js'
+import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 
 describe('ConversationService', () => {
   let tmpDir: string
@@ -16,6 +17,11 @@ describe('ConversationService', () => {
   let originalOAuthToken: string | undefined
   let originalProviderManagedByHost: string | undefined
   let originalDiagnosticsFile: string | undefined
+  let originalHome: string | undefined
+  let originalPath: string | undefined
+  let originalShell: string | undefined
+  let originalZdotdir: string | undefined
+  let originalDisableTerminalShellEnv: string | undefined
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-conversation-service-'))
@@ -28,6 +34,11 @@ describe('ConversationService', () => {
     originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN
     originalProviderManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     originalDiagnosticsFile = process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
+    originalHome = process.env.HOME
+    originalPath = process.env.PATH
+    originalShell = process.env.SHELL
+    originalZdotdir = process.env.ZDOTDIR
+    originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
 
     process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env.ANTHROPIC_API_KEY = 'stale-parent-api-key'
@@ -40,6 +51,8 @@ describe('ConversationService', () => {
     delete process.env.CLAUDE_CODE_ENTRYPOINT
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
+    process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
+    resetTerminalShellEnvironmentCacheForTests()
   })
 
   afterEach(async () => {
@@ -70,8 +83,48 @@ describe('ConversationService', () => {
     if (originalDiagnosticsFile === undefined) delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     else process.env.CLAUDE_CODE_DIAGNOSTICS_FILE = originalDiagnosticsFile
 
+    if (originalHome === undefined) delete process.env.HOME
+    else process.env.HOME = originalHome
+
+    if (originalPath === undefined) delete process.env.PATH
+    else process.env.PATH = originalPath
+
+    if (originalShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = originalShell
+
+    if (originalZdotdir === undefined) delete process.env.ZDOTDIR
+    else process.env.ZDOTDIR = originalZdotdir
+
+    if (originalDisableTerminalShellEnv === undefined) delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    else process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
+
+    resetTerminalShellEnvironmentCacheForTests()
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
+
+  async function writeFakeZsh(filePath: string) {
+    await fs.writeFile(
+      filePath,
+      [
+        '#!/bin/sh',
+        'command=',
+        'while [ "$#" -gt 0 ]; do',
+        '  if [ "$1" = "-c" ]; then',
+        '    shift',
+        '    command="$1"',
+        '    break',
+        '  fi',
+        '  shift',
+        'done',
+        'if [ -f "$HOME/.zshrc" ]; then',
+        '  . "$HOME/.zshrc" </dev/null >/dev/null 2>/dev/null || true',
+        'fi',
+        'exec /bin/sh -c "$command"',
+        '',
+      ].join('\n'),
+      { mode: 0o755 },
+    )
+  }
 
   test('keeps inherited provider env when no desktop provider config exists', async () => {
     const service = new ConversationService() as any
@@ -99,6 +152,37 @@ describe('ConversationService', () => {
     )
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).toContain('myself-code')
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).not.toContain('myself_code')
+  })
+
+  test('buildChildEnv inherits exported terminal shell variables for desktop CLI sessions', async () => {
+    const shellPath = path.join(tmpDir, 'zsh')
+    const nodeBin = path.join(tmpDir, 'node-bin')
+    const nvmDir = path.join(tmpDir, '.nvm')
+    await fs.mkdir(nodeBin, { recursive: true })
+    await fs.mkdir(nvmDir, { recursive: true })
+    await writeFakeZsh(shellPath)
+    await fs.writeFile(
+      path.join(tmpDir, '.zshrc'),
+      [
+        `export NVM_DIR="${nvmDir}"`,
+        `export PATH="${nodeBin}:$PATH"`,
+        '',
+      ].join('\n'),
+    )
+
+    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    process.env.HOME = tmpDir
+    process.env.SHELL = shellPath
+    process.env.PATH = '/usr/bin:/bin'
+    delete process.env.ZDOTDIR
+    resetTerminalShellEnvironmentCacheForTests()
+
+    const service = new ConversationService() as any
+    const env = (await service.buildChildEnv(tmpDir)) as Record<string, string>
+
+    expect(env.NVM_DIR).toBe(nvmDir)
+    expect(env.PATH.split(path.delimiter)[0]).toBe(nodeBin)
+    expect(env.PATH.split(path.delimiter)).toContain('/usr/bin')
   })
 
   test('strips inherited provider env when desktop provider config exists', async () => {
@@ -192,6 +276,9 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:3456/proxy/providers/${provider.id}`)
     expect(env.ANTHROPIC_API_KEY).toBe('proxy-managed')
     expect(env.ANTHROPIC_MODEL).toBe('kimi-k2.6')
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-k2.6')
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.6')
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.6')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
   })

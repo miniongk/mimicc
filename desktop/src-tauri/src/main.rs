@@ -18,7 +18,11 @@ fn main() {
     // All existing std::env::var("CLAUDE_CONFIG_DIR") checks in lib.rs handle this.
 
     if let Some(portable_dir) = determine_startup_portable_dir() {
-        std::env::set_var("CLAUDE_CONFIG_DIR", portable_dir.to_string_lossy().to_string());
+        std::env::set_var(
+            "CLAUDE_CONFIG_DIR",
+            portable_dir.to_string_lossy().to_string(),
+        );
+        std::env::set_var("CC_HAHA_APP_PORTABLE_DIR", "1");
     }
 
     // If CLAUDE_CONFIG_DIR is set (either from env or from our startup logic above),
@@ -52,8 +56,15 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
         let path = dir.join("app-mode.json");
         let data = std::fs::read_to_string(&path).ok()?;
         let parsed: serde_json::Value = serde_json::from_str(&data).ok()?;
-        let mode = parsed.get("mode").and_then(|m| m.as_str()).unwrap_or("default").to_string();
-        let portable_dir = parsed.get("portable_dir").and_then(|v| v.as_str()).map(PathBuf::from);
+        let mode = parsed
+            .get("mode")
+            .and_then(|m| m.as_str())
+            .unwrap_or("default")
+            .to_ascii_lowercase();
+        let portable_dir = parsed
+            .get("portable_dir")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from);
         Some((mode, portable_dir))
     }
 
@@ -70,11 +81,18 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     let system_config: Option<PathBuf> = std::env::var("APPDATA").ok().map(PathBuf::from);
     #[cfg(target_os = "macos")]
-    let system_config: Option<PathBuf> = std::env::var("HOME").ok().map(|h| PathBuf::from(h).join("Library").join("Application Support"));
+    let system_config: Option<PathBuf> = std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join("Library").join("Application Support"));
     #[cfg(target_os = "linux")]
     let system_config: Option<PathBuf> = std::env::var("XDG_CONFIG_HOME")
-        .ok().map(PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")));
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        });
 
     if let Some(ref sys_cfg) = system_config {
         // 修复：必须使用 Tauri 默认的 bundle identifier

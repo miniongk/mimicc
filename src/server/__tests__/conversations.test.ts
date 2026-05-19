@@ -763,9 +763,9 @@ describe('WebSocket Chat Integration', () => {
   })
 
   afterAll(async () => {
-    server?.stop()
+    server?.stop(true)
     if (tmpDir) {
-      await fs.rm(tmpDir, { recursive: true, force: true })
+      await rmWithRetry(tmpDir)
     }
     if (originalCliPath) {
       process.env.CLAUDE_CLI_PATH = originalCliPath
@@ -906,6 +906,7 @@ describe('WebSocket Chat Integration', () => {
       workDir: worktreePath!,
       repository: launchInfo!.repository,
     })
+    await sessionService.deletePlaceholderSessionFiles(sessionId, worktreePath!)
 
     const messages = await runTurn(sessionId, 'Continue in the existing worktree')
     const statusVerbs = messages

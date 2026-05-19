@@ -189,6 +189,19 @@ async function resolveDirectory(workDir: string): Promise<string> {
   return realPath
 }
 
+async function canonicalizeKnownPath(candidate: string): Promise<string> {
+  try {
+    return (await fs.realpath(candidate)).normalize('NFC')
+  } catch {
+    return path.resolve(candidate).normalize('NFC')
+  }
+}
+
+function isSameOrInsidePath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate)
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
 function normalizeRemoteBranch(ref: string): { name: string; remoteRef: string } | null {
   if (!ref || ref.endsWith('/HEAD')) return null
   const slash = ref.indexOf('/')
@@ -353,11 +366,17 @@ export async function getRepositoryContext(workDir: string): Promise<RepositoryC
     ])
 
     const currentBranch = branchResult.stdout.trim() || null
-    const worktreeRecords = worktreeResult.code === 0 ? parseWorktreeList(worktreeResult.stdout) : []
+    const rawWorktreeRecords = worktreeResult.code === 0 ? parseWorktreeList(worktreeResult.stdout) : []
+    const worktreeRecords = await Promise.all(
+      rawWorktreeRecords.map(async (worktree) => ({
+        ...worktree,
+        path: await canonicalizeKnownPath(worktree.path),
+      })),
+    )
     const worktrees = worktreeRecords.map((worktree) => ({
       path: worktree.path,
       branch: worktree.branch,
-      current: absWorkDir === worktree.path || absWorkDir.startsWith(`${worktree.path}${path.sep}`),
+      current: isSameOrInsidePath(worktree.path, absWorkDir),
     }))
 
     return {

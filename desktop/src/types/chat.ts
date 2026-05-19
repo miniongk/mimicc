@@ -155,6 +155,7 @@ export type AgentTaskNotification = {
   toolUseId: string
   status: 'completed' | 'failed' | 'stopped'
   summary?: string
+  result?: string
   outputFile?: string
   usage?: BackgroundAgentTaskUsage
   timestamp?: string

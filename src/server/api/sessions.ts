@@ -445,6 +445,7 @@ function mergeSessionSlashCommands(
     merged.set(command.name, {
       name: command.name,
       description: command.description || '',
+      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
     })
   }
 
@@ -777,9 +778,10 @@ const RECENT_PROJECTS_CACHE_TTL = 30_000
 const DESKTOP_WORKTREE_MARKER = '/.claude/worktrees/'
 
 function projectNameForRecentPath(realPath: string, fallback: string): string {
-  const displayRoot = realPath.includes(DESKTOP_WORKTREE_MARKER)
-    ? realPath.slice(0, realPath.indexOf(DESKTOP_WORKTREE_MARKER))
-    : realPath
+  const normalizedRealPath = realPath.replace(/\\/g, '/')
+  const displayRoot = normalizedRealPath.includes(DESKTOP_WORKTREE_MARKER)
+    ? normalizedRealPath.slice(0, normalizedRealPath.indexOf(DESKTOP_WORKTREE_MARKER))
+    : normalizedRealPath
   return displayRoot.split('/').filter(Boolean).pop() || fallback
 }
 

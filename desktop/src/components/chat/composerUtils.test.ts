@@ -81,11 +81,14 @@ describe('composerUtils', () => {
     )
   })
 
-  it('does not expose paused /goal fallback commands', () => {
+  it('keeps /goal as a single command with argument hints instead of pseudo subcommands', () => {
     const commands = filterSlashCommands(mergeSlashCommands([]), 'goal')
 
-    expect(commands.map((command) => command.name)).toEqual([])
-    expect(mergeSlashCommands([]).map((command) => command.name)).not.toContain('goal')
+    expect(commands.map((command) => command.name)).toEqual(['goal'])
+    expect(commands[0]).toMatchObject({
+      description: 'Set a completion goal',
+      argumentHint: '[<condition> | clear]',
+    })
     expect(mergeSlashCommands([]).map((command) => command.name)).not.toContain('goal status')
     expect(mergeSlashCommands([]).map((command) => command.name)).not.toContain('goal --tokens')
   })
