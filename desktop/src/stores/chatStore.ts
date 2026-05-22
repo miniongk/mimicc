@@ -17,6 +17,7 @@ import type { RuntimeSelection } from '../types/runtime'
 import type {
   ActiveGoalState,
   AgentTaskNotification,
+  ApiRetryState,
   AttachmentRef,
   BackgroundAgentTask,
   BackgroundAgentTaskUsage,
@@ -32,6 +33,8 @@ import type {
 } from '../types/chat'
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+type ToolCall = Extract<UIMessage, { type: 'tool_use' }>
+type CompactSummaryMessage = Extract<UIMessage, { type: 'compact_summary' }>
 
 export type ComposerDraftState = {
   input: string
@@ -61,6 +64,7 @@ export type PerSessionState = {
   tokenUsage: TokenUsage
   elapsedSeconds: number
   statusVerb: string
+  apiRetry?: ApiRetryState | null
   slashCommands: Array<{ name: string; description: string; argumentHint?: string }>
   agentTaskNotifications: Record<string, AgentTaskNotification>
   backgroundAgentTasks?: Record<string, BackgroundAgentTask>
@@ -88,6 +92,7 @@ const DEFAULT_SESSION_STATE: PerSessionState = {
   tokenUsage: { input_tokens: 0, output_tokens: 0 },
   elapsedSeconds: 0,
   statusVerb: '',
+  apiRetry: null,
   slashCommands: [],
   agentTaskNotifications: {},
   backgroundAgentTasks: {},
@@ -143,6 +148,7 @@ type ChatStore = {
 }
 
 const TASK_TOOL_NAMES = new Set(['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TodoWrite'])
+const TASK_STOP_TOOL_NAMES = new Set(['TaskStop', 'KillShell'])
 const pendingTaskToolUseIdsBySession = new Map<string, Set<string>>()
 const pendingToolParentUseIdsBySession = new Map<string, Map<string, string>>()
 
@@ -192,6 +198,13 @@ function clearPendingToolParentUseIds(sessionId: string): void {
   pendingToolParentUseIdsBySession.delete(sessionId)
 }
 const AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS = 160
+const COMPACT_SUMMARY_PREFIX =
+  'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.'
+const COMPACT_SUMMARY_CUTOFFS = [
+  '\n\nIf you need specific details from before compaction',
+  '\n\nContinue the conversation from where it left off',
+  '\nContinue the conversation from where it left off',
+]
 
 let msgCounter = 0
 const nextId = () => `msg-${++msgCounter}-${Date.now()}`
@@ -233,15 +246,26 @@ function appendAssistantTextMessage(
   content: string,
   timestamp: number,
   model?: string,
+  transcriptMessageId?: string,
 ): UIMessage[] {
   if (!content.trim()) return messages
 
   const last = messages[messages.length - 1]
-  if (last?.type === 'assistant_text') {
+  const canMergeIntoLast =
+    last?.type === 'assistant_text' &&
+    (
+      transcriptMessageId
+        ? last.transcriptMessageId === transcriptMessageId
+        : !last.transcriptMessageId
+    )
+  if (canMergeIntoLast) {
     const merged: UIMessage = {
       ...last,
       content: last.content + content,
       ...(model ?? last.model ? { model: model ?? last.model } : {}),
+      ...(transcriptMessageId ?? last.transcriptMessageId
+        ? { transcriptMessageId: transcriptMessageId ?? last.transcriptMessageId }
+        : {}),
     }
     return [...messages.slice(0, -1), merged]
   }
@@ -253,9 +277,97 @@ function appendAssistantTextMessage(
       type: 'assistant_text',
       content,
       timestamp,
+      ...(transcriptMessageId ? { transcriptMessageId } : {}),
       ...(model ? { model } : {}),
     },
   ]
+}
+
+function extractCompactSummaryContent(content: unknown): string | null {
+  if (typeof content !== 'string') return null
+  const trimmed = content.trim()
+  if (!trimmed.startsWith(COMPACT_SUMMARY_PREFIX)) return null
+
+  let summary = trimmed.slice(COMPACT_SUMMARY_PREFIX.length).trim()
+  for (const marker of COMPACT_SUMMARY_CUTOFFS) {
+    const index = summary.indexOf(marker)
+    if (index >= 0) {
+      summary = summary.slice(0, index).trim()
+    }
+  }
+  return summary || null
+}
+
+function compactMetadataFromUnknown(data: unknown): Pick<CompactSummaryMessage, 'trigger' | 'preTokens' | 'messagesSummarized'> {
+  if (!data || typeof data !== 'object') return {}
+  const record = data as Record<string, unknown>
+  const trigger = record.trigger === 'manual' || record.trigger === 'auto'
+    ? record.trigger
+    : undefined
+  const preTokens = typeof record.preTokens === 'number'
+    ? record.preTokens
+    : typeof record.pre_tokens === 'number'
+      ? record.pre_tokens
+      : undefined
+  const messagesSummarized = typeof record.messagesSummarized === 'number'
+    ? record.messagesSummarized
+    : typeof record.messages_summarized === 'number'
+      ? record.messages_summarized
+      : undefined
+
+  return {
+    ...(trigger ? { trigger } : {}),
+    ...(preTokens !== undefined ? { preTokens } : {}),
+    ...(messagesSummarized !== undefined ? { messagesSummarized } : {}),
+  }
+}
+
+function appendOrUpdateCompactSummary(
+  messages: UIMessage[],
+  update: Partial<Omit<CompactSummaryMessage, 'id' | 'type' | 'timestamp'>>,
+  timestamp: number,
+): UIMessage[] {
+  let existingIndex = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.type === 'compact_summary') {
+      existingIndex = index
+      break
+    }
+  }
+  if (existingIndex >= 0) {
+    const existing = messages[existingIndex] as CompactSummaryMessage
+    const next: CompactSummaryMessage = {
+      ...existing,
+      ...update,
+      title: update.title ?? existing.title,
+      timestamp: existing.timestamp,
+    }
+    return [
+      ...messages.slice(0, existingIndex),
+      next,
+      ...messages.slice(existingIndex + 1),
+    ]
+  }
+
+  return [
+    ...messages,
+    {
+      id: nextId(),
+      type: 'compact_summary',
+      title: update.title ?? 'Context compacted',
+      ...update,
+      timestamp,
+    },
+  ]
+}
+
+function collapseToCompactSummary(
+  messages: UIMessage[],
+  update: Partial<Omit<CompactSummaryMessage, 'id' | 'type' | 'timestamp'>>,
+  timestamp: number,
+): UIMessage[] {
+  const existing = [...messages].reverse().find((message): message is CompactSummaryMessage => message.type === 'compact_summary')
+  return appendOrUpdateCompactSummary(existing ? [existing] : [], update, timestamp)
 }
 
 function upsertBackgroundTaskMessage(
@@ -328,6 +440,91 @@ function mergeRestoredTerminalGoalEvents(
   return missingTerminalEvents.length > 0
     ? [...messages, ...missingTerminalEvents]
     : messages
+}
+
+function mergeRestoredTranscriptMessageIds(
+  messages: UIMessage[],
+  restoredMessages: UIMessage[],
+): UIMessage[] {
+  const restoredCandidates = restoredMessages.filter((
+    message,
+  ): message is Extract<UIMessage, { type: 'user_text' | 'assistant_text' }> =>
+    (message.type === 'user_text' || message.type === 'assistant_text') &&
+    typeof message.transcriptMessageId === 'string' &&
+    message.transcriptMessageId.length > 0)
+
+  if (restoredCandidates.length === 0) return messages
+
+  let restoredCursor = 0
+  let changed = false
+  const merged = messages.map((message) => {
+    if (
+      (message.type !== 'user_text' && message.type !== 'assistant_text') ||
+      message.transcriptMessageId
+    ) {
+      return message
+    }
+
+    const matchIndex = restoredCandidates.findIndex((candidate, index) =>
+      index >= restoredCursor &&
+      candidate.type === message.type &&
+      candidate.content.trim() === message.content.trim())
+
+    if (matchIndex === -1) return message
+
+    restoredCursor = matchIndex + 1
+    changed = true
+    return {
+      ...message,
+      transcriptMessageId: restoredCandidates[matchIndex]!.transcriptMessageId,
+    }
+  })
+
+  return changed ? merged : messages
+}
+
+function mergeRestoredHistoryIntoLiveMessages(
+  messages: UIMessage[],
+  restoredMessages: UIMessage[],
+): UIMessage[] {
+  return mergeRestoredTerminalGoalEvents(
+    mergeRestoredTranscriptMessageIds(messages, restoredMessages),
+    restoredMessages,
+  )
+}
+
+function needsTranscriptIdHydrationRetry(session: PerSessionState | undefined): boolean {
+  if (!session || session.chatState !== 'idle') return false
+
+  let currentTurnHasHydratedUser = false
+  for (const message of session.messages) {
+    if (message.type === 'user_text') {
+      currentTurnHasHydratedUser = Boolean(message.transcriptMessageId)
+      continue
+    }
+    if (
+      currentTurnHasHydratedUser &&
+      message.type === 'assistant_text' &&
+      !message.transcriptMessageId
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function refreshCompletedTranscriptHistory(
+  get: () => ChatStore,
+  sessionId: string,
+): void {
+  void get().loadHistory(sessionId).then(() => {
+    if (!needsTranscriptIdHydrationRetry(get().sessions[sessionId])) return
+    setTimeout(() => {
+      if (!needsTranscriptIdHydrationRetry(get().sessions[sessionId])) return
+      void get().loadHistory(sessionId)
+    }, 750)
+  })
 }
 
 function normalizeMemoryEventFiles(data: unknown): MemoryEventFile[] {
@@ -590,6 +787,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             elapsedSeconds: 0,
             streamingText: '',
             statusVerb: isMemberSession ? '' : randomSpinnerVerb(),
+            apiRetry: null,
             elapsedTimer: timer,
             connectionState: isMemberSession ? 'connected' : session.connectionState,
           },
@@ -677,6 +875,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             chatState: 'idle',
             pendingPermission: null,
             pendingComputerUsePermission: null,
+            apiRetry: null,
             elapsedTimer: null,
           },
         },
@@ -705,7 +904,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               s.backgroundAgentTasks ?? {},
               restoredBackgroundTasks,
             ),
-            messages: mergeRestoredTerminalGoalEvents(
+            messages: mergeRestoredHistoryIntoLiveMessages(
               mergeBackgroundTaskMessages(s.messages, restoredBackgroundTasks),
               uiMessages,
             ),
@@ -766,6 +965,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             pendingComputerUsePermission: null,
             elapsedTimer: null,
             statusVerb: '',
+            apiRetry: null,
           })),
         }
       })
@@ -821,7 +1021,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   clearMessages: (sessionId) => {
     clearPendingTaskToolUseIds(sessionId)
     clearPendingToolParentUseIds(sessionId)
-    set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({ messages: [], activeGoal: null, streamingText: '', chatState: 'idle' })) }))
+    set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({
+      messages: [],
+      activeGoal: null,
+      streamingText: '',
+      chatState: 'idle',
+      apiRetry: null,
+    })) }))
   },
 
   handleServerMessage: (sessionId, msg) => {
@@ -842,8 +1048,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           // streaming one markdown reply. Keep that turn intact so we do not
           // split formatting markers (for example backticks/strong markers)
           // across separate bubbles.
-          const preserveStreamingTurn = hasPendingStreamText && msg.state !== 'idle'
-          const shouldFlush = hasPendingStreamText && msg.state === 'idle'
+          const preserveStreamingTurn = hasPendingStreamText && msg.state !== 'idle' && msg.state !== 'compacting'
+          const shouldFlush = hasPendingStreamText && (msg.state === 'idle' || msg.state === 'compacting')
+          let nextMessages = session.messages
+          if (shouldFlush) {
+            nextMessages = appendAssistantTextMessage(nextMessages, pendingText, Date.now())
+          }
+          if (msg.state === 'compacting') {
+            nextMessages = collapseToCompactSummary(
+              nextMessages,
+              {
+                title: 'Context compacted',
+                phase: 'compacting',
+              },
+              Date.now(),
+            )
+          }
           return {
             chatState: preserveStreamingTurn ? 'streaming' : msg.state,
             statusVerb: msg.state === 'idle'
@@ -853,8 +1073,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 : '',
             ...(msg.tokens ? { tokenUsage: { ...session.tokenUsage, output_tokens: msg.tokens } } : {}),
             ...(msg.state === 'idle' ? { activeThinkingId: null } : {}),
+            ...(msg.state === 'idle' ? { apiRetry: null } : {}),
+            ...((shouldFlush || msg.state === 'compacting') ? { messages: nextMessages } : {}),
             ...(shouldFlush ? {
-              messages: appendAssistantTextMessage(session.messages, pendingText, Date.now()),
               streamingText: '',
             } : pendingText !== session.streamingText ? { streamingText: pendingText } : {}),
           }
@@ -885,6 +1106,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ...(pendingText !== s.streamingText ? { streamingText: pendingText } : {}),
             chatState: 'streaming',
             activeThinkingId: null,
+            apiRetry: null,
           }))
         } else if (msg.blockType === 'tool_use') {
           rememberPendingToolParentUseId(sessionId, msg.toolUseId, msg.parentToolUseId)
@@ -894,8 +1116,31 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             streamingToolInput: '',
             chatState: 'tool_executing',
             activeThinkingId: null,
+            apiRetry: null,
           }))
         }
+        break
+      }
+
+      case 'api_retry': {
+        const attempt = Math.max(1, Math.trunc(msg.attempt))
+        const maxRetries = Math.max(attempt, Math.trunc(msg.maxRetries))
+        const retryDelayMs = Math.max(0, Math.trunc(msg.retryDelayMs))
+        update((session) => ({
+          apiRetry: {
+            attempt,
+            maxRetries,
+            retryDelayMs,
+            errorStatus: msg.errorStatus ?? null,
+            errorType: msg.errorType,
+            errorMessage: msg.errorMessage,
+            receivedAt: Date.now(),
+          },
+          chatState: session.chatState === 'idle' ? 'thinking' : session.chatState,
+          activeThinkingId: null,
+          statusVerb: '',
+        }))
+        useTabStore.getState().updateTabStatus(sessionId, 'running')
         break
       }
 
@@ -962,15 +1207,32 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       case 'tool_result': {
+        const now = Date.now()
         const pendingParentToolUseId = consumePendingToolParentUseId(sessionId, msg.toolUseId)
         const parentToolUseId = msg.parentToolUseId ?? pendingParentToolUseId
-        update((s) => ({
-          messages: [...s.messages, {
+        update((s) => {
+          let messages: UIMessage[] = [...s.messages, {
             id: nextId(), type: 'tool_result', toolUseId: msg.toolUseId,
-            content: msg.content, isError: msg.isError, timestamp: Date.now(), parentToolUseId,
-          }],
-          chatState: 'thinking', activeThinkingId: null,
-        }))
+            content: msg.content, isError: msg.isError, timestamp: now, parentToolUseId,
+          }]
+          let backgroundAgentTasks = s.backgroundAgentTasks ?? {}
+          const stoppedTask = msg.isError
+            ? null
+            : getStoppedBackgroundTaskFromToolResult(s.messages, msg.toolUseId, msg.content)
+          if (stoppedTask) {
+            backgroundAgentTasks = upsertBackgroundAgentTask(backgroundAgentTasks, stoppedTask, now)
+            const task = backgroundAgentTasks[stoppedTask.taskId]
+            if (task) {
+              messages = upsertBackgroundTaskMessage(messages, task, now)
+            }
+          }
+          return {
+            messages,
+            ...(stoppedTask ? { backgroundAgentTasks } : {}),
+            chatState: 'thinking',
+            activeThinkingId: null,
+          }
+        })
         if (consumePendingTaskToolUseId(sessionId, msg.toolUseId)) {
           useCLITaskStore.getState().refreshTasks(sessionId)
         }
@@ -999,6 +1261,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           pendingComputerUsePermission: null,
           chatState: 'permission_pending',
           activeThinkingId: null,
+          apiRetry: null,
           messages:
             msg.toolName === 'AskUserQuestion'
               ? s.messages
@@ -1032,6 +1295,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           pendingPermission: null,
           chatState: 'permission_pending',
           activeThinkingId: null,
+          apiRetry: null,
         }))
         break
 
@@ -1058,6 +1322,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           pendingPermission: null,
           pendingComputerUsePermission: null,
           elapsedTimer: null,
+          apiRetry: null,
         }))
         useTabStore.getState().updateTabStatus(sessionId, 'idle')
         const notification = wasAgentRunning
@@ -1072,6 +1337,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             target: { type: 'session', sessionId },
           })
         }
+        refreshCompletedTranscriptHistory(get, sessionId)
         break
       }
 
@@ -1090,6 +1356,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             streamingText: '',
             pendingPermission: null,
             pendingComputerUsePermission: null,
+            apiRetry: null,
           }
         })
         useTabStore.getState().updateTabStatus(sessionId, 'error')
@@ -1152,6 +1419,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             elapsedTimer: null,
             elapsedSeconds: 0,
             statusVerb: '',
+            apiRetry: null,
             tokenUsage: { input_tokens: 0, output_tokens: 0 },
             slashCommands: [],
             activeGoal: null,
@@ -1167,19 +1435,40 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           useTabStore.getState().updateTabStatus(sessionId, 'idle')
         }
         if (msg.subtype === 'compact_boundary') {
+          const metadata = compactMetadataFromUnknown(msg.data)
           update((session) => ({
-            messages: [
-              ...session.messages,
+            chatState: session.chatState === 'compacting' ? 'thinking' : session.chatState,
+            statusVerb: session.chatState === 'compacting' ? '' : session.statusVerb,
+            messages: collapseToCompactSummary(
+              session.messages,
               {
-                id: nextId(),
-                type: 'system',
-                content: typeof msg.message === 'string' && msg.message.trim()
+                title: typeof msg.message === 'string' && msg.message.trim()
                   ? msg.message
                   : 'Context compacted',
-                timestamp: Date.now(),
+                phase: 'complete',
+                ...metadata,
               },
-            ],
+              Date.now(),
+            ),
           }))
+        }
+        if (msg.subtype === 'compact_summary') {
+          const summary = extractCompactSummaryContent(msg.message)
+          if (summary) {
+            update((session) => ({
+              messages: collapseToCompactSummary(
+                session.messages,
+                {
+                  title: 'Context compacted',
+                  phase: 'complete',
+                  summary,
+                  trigger: 'auto',
+                  ...compactMetadataFromUnknown(msg.data),
+                },
+                Date.now(),
+              ),
+            }))
+          }
         }
         if (msg.subtype === 'memory_saved') {
           const files = normalizeMemoryEventFiles(msg.data)
@@ -1372,6 +1661,55 @@ function readNonEmptyString(record: Record<string, unknown>, ...keys: string[]):
   return undefined
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> | null {
+  const record = readRecord(value)
+  if (record) return record
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{')) return null
+  try {
+    return readRecord(JSON.parse(trimmed))
+  } catch {
+    return null
+  }
+}
+
+function findToolUseMessage(messages: UIMessage[], toolUseId: string): ToolCall | null {
+  return messages.find((
+    message,
+  ): message is ToolCall =>
+    message.type === 'tool_use' &&
+    message.toolUseId === toolUseId) ?? null
+}
+
+function getStoppedBackgroundTaskFromToolResult(
+  messages: UIMessage[],
+  toolUseId: string,
+  content: unknown,
+): (Partial<BackgroundAgentTask> & Pick<BackgroundAgentTask, 'taskId' | 'status'>) | null {
+  const toolUse = findToolUseMessage(messages, toolUseId)
+  if (!toolUse || !TASK_STOP_TOOL_NAMES.has(toolUse.toolName)) return null
+
+  const input = readRecord(toolUse.input) ?? {}
+  const output = parseJsonRecord(content) ?? {}
+  const taskId = readNonEmptyString(output, 'task_id', 'taskId') ??
+    readNonEmptyString(input, 'task_id', 'taskId', 'shell_id', 'shellId')
+  if (!taskId) return null
+
+  return {
+    taskId,
+    status: 'stopped',
+    taskType: readNonEmptyString(output, 'task_type', 'taskType'),
+    description: readNonEmptyString(output, 'command', 'description', 'message'),
+    summary: readNonEmptyString(output, 'message'),
+  }
+}
+
 function normalizeBackgroundTaskUsage(value: unknown): BackgroundAgentTaskUsage | undefined {
   if (!value || typeof value !== 'object') return undefined
   const record = value as Record<string, unknown>
@@ -1547,6 +1885,10 @@ function extractLocalCommandOutputText(content: unknown): string | null {
   return readXmlTag(text, 'local-command-stdout') ?? readXmlTag(text, 'local-command-stderr') ?? null
 }
 
+function isCompactLocalCommandOutput(output: string): boolean {
+  return output.trim() === 'Compacted'
+}
+
 function parseGoalEventFromLocalCommandOutput(
   output: string,
   command: { name: string; args: string } | null,
@@ -1666,13 +2008,24 @@ function pushAssistantHistoryText(
   content: string,
   timestamp: number,
   model?: string,
+  transcriptMessageId?: string,
 ): void {
   if (!content.trim()) return
 
   const last = messages[messages.length - 1]
-  if (last?.type === 'assistant_text') {
+  const canMergeIntoLast =
+    last?.type === 'assistant_text' &&
+    (
+      transcriptMessageId
+        ? last.transcriptMessageId === transcriptMessageId
+        : !last.transcriptMessageId
+    )
+  if (canMergeIntoLast) {
     last.content += content
     if (model && !last.model) last.model = model
+    if (transcriptMessageId && !last.transcriptMessageId) {
+      last.transcriptMessageId = transcriptMessageId
+    }
     return
   }
 
@@ -1681,6 +2034,7 @@ function pushAssistantHistoryText(
     type: 'assistant_text',
     content,
     timestamp,
+    ...(transcriptMessageId ? { transcriptMessageId } : {}),
     ...(model ? { model } : {}),
   })
 }
@@ -1843,6 +2197,16 @@ export function mapHistoryMessagesToUiMessages(
 
     const timestamp = new Date(msg.timestamp).getTime()
     if (msg.type === 'system' && typeof msg.content === 'string') {
+      if (msg.content.trim() === 'Conversation compacted' || msg.content.trim() === 'Context compacted') {
+        const compactMessages = collapseToCompactSummary(
+          uiMessages,
+          { title: 'Context compacted', phase: 'complete' },
+          timestamp,
+        )
+        uiMessages.splice(0, uiMessages.length, ...compactMessages)
+        continue
+      }
+
       const localCommand = parseGoalCommandFromLocalCommand(msg.content)
       if (localCommand) {
         pendingGoalCommand = localCommand
@@ -1873,6 +2237,27 @@ export function mapHistoryMessagesToUiMessages(
       }
     }
     if (msg.type === 'user' && typeof msg.content === 'string') {
+      const localCommandOutput = extractLocalCommandOutputText(msg.content)
+      if (localCommandOutput && isCompactLocalCommandOutput(localCommandOutput)) {
+        continue
+      }
+
+      const compactSummary = extractCompactSummaryContent(msg.content)
+      if (compactSummary) {
+        const compactMessages = collapseToCompactSummary(
+          uiMessages,
+          {
+            title: 'Context compacted',
+            phase: 'complete',
+            summary: compactSummary,
+            trigger: 'auto',
+          },
+          timestamp,
+        )
+        uiMessages.splice(0, uiMessages.length, ...compactMessages)
+        continue
+      }
+
       if (isTeammateMessage(msg.content)) {
         if (!includeTeammateMessages) continue
         const teammateContents = extractVisibleTeammateMessageContents(msg.content)
@@ -1881,6 +2266,7 @@ export function mapHistoryMessagesToUiMessages(
           id: msg.id || nextId(),
           type: 'user_text',
           content: teammateContents.join('\n\n'),
+          ...(msg.id ? { transcriptMessageId: msg.id } : {}),
           timestamp,
         })
         continue
@@ -1890,6 +2276,7 @@ export function mapHistoryMessagesToUiMessages(
         id: msg.id || nextId(),
         type: 'user_text',
         content: parsed.content,
+        ...(msg.id ? { transcriptMessageId: msg.id } : {}),
         ...(parsed.modelContent ? { modelContent: parsed.modelContent } : {}),
         ...(parsed.attachments ? { attachments: parsed.attachments } : {}),
         timestamp,
@@ -1898,13 +2285,22 @@ export function mapHistoryMessagesToUiMessages(
     }
     if (msg.type === 'assistant' && typeof msg.content === 'string') {
       if (!msg.content.trim()) continue
-      uiMessages.push({ id: msg.id || nextId(), type: 'assistant_text', content: msg.content, timestamp, model: msg.model })
+      uiMessages.push({
+        id: msg.id || nextId(),
+        type: 'assistant_text',
+        content: msg.content,
+        ...(msg.id ? { transcriptMessageId: msg.id } : {}),
+        timestamp,
+        model: msg.model,
+      })
       continue
     }
     if ((msg.type === 'assistant' || msg.type === 'tool_use') && Array.isArray(msg.content)) {
       for (const block of msg.content as AssistantHistoryBlock[]) {
         if (block.type === 'thinking' && block.thinking) uiMessages.push({ id: nextId(), type: 'thinking', content: block.thinking, timestamp })
-        else if (block.type === 'text' && block.text) pushAssistantHistoryText(uiMessages, block.text, timestamp, msg.model)
+        else if (block.type === 'text' && block.text) {
+          pushAssistantHistoryText(uiMessages, block.text, timestamp, msg.model, msg.id || undefined)
+        }
         else if (block.type === 'tool_use') uiMessages.push({ id: nextId(), type: 'tool_use', toolName: block.name ?? 'unknown', toolUseId: block.id ?? '', input: block.input, timestamp, parentToolUseId: msg.parentToolUseId })
       }
       continue
@@ -1930,6 +2326,7 @@ export function mapHistoryMessagesToUiMessages(
           id: msg.id || nextId(),
           type: 'user_text',
           content: parsed.content,
+          ...(msg.id ? { transcriptMessageId: msg.id } : {}),
           ...(parsed.modelContent ? { modelContent: parsed.modelContent } : {}),
           attachments: allAttachments.length > 0 ? allAttachments : undefined,
           timestamp,

@@ -7,6 +7,7 @@ import { useChatStore } from '../../stores/chatStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { OPENAI_OFFICIAL_PROVIDER_ID } from '../../constants/openaiOfficialProvider'
 import type { ModelInfo } from '../../types/settings'
 
 const MODELS: ModelInfo[] = [
@@ -115,6 +116,56 @@ describe('ModelSelector', () => {
     expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
       providerId: 'provider-a',
       modelId: 'provider-fast',
+    })
+  })
+
+  it('uses the ChatGPT Official catalog when that built-in provider is active', async () => {
+    const openAIModels: ModelInfo[] = [
+      {
+        id: 'gpt-5.3-codex',
+        name: 'GPT-5.3 Codex',
+        description: 'Best for coding and agentic work',
+        context: '',
+      },
+      {
+        id: 'gpt-5.5',
+        name: 'GPT-5.5',
+        description: 'Latest general-purpose model',
+        context: '',
+      },
+    ]
+    const setSessionRuntime = vi.fn()
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: openAIModels,
+      currentModel: openAIModels[0],
+      activeProviderName: 'ChatGPT Official',
+    })
+    useProviderStore.setState({
+      providers: [],
+      activeId: OPENAI_OFFICIAL_PROVIDER_ID,
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+    useChatStore.setState({
+      setSessionRuntime,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    render(<ModelSelector runtimeKey="session-openai" />)
+
+    await clickByRole(/GPT-5\.3 Codex/i)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /GPT-5\.5/ }))
+      await Promise.resolve()
+    })
+
+    expect(useSessionRuntimeStore.getState().selections['session-openai']).toEqual({
+      providerId: OPENAI_OFFICIAL_PROVIDER_ID,
+      modelId: 'gpt-5.5',
+    })
+    expect(setSessionRuntime).toHaveBeenCalledWith('session-openai', {
+      providerId: OPENAI_OFFICIAL_PROVIDER_ID,
+      modelId: 'gpt-5.5',
     })
   })
 

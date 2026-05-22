@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { Check, ChevronDown, Clock, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pin, PinOff, RefreshCw, RotateCcw, SquarePen, X } from 'lucide-react'
+import { Check, ChevronDown, Clock, Folder, FolderOpen, FolderPlus, GitBranch, LoaderCircle, MoreHorizontal, Pin, PinOff, RefreshCw, RotateCcw, SquarePen, X } from 'lucide-react'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
-import { useTranslation } from '../../i18n'
+import { useTranslation, type TranslationKey } from '../../i18n'
 import { ConfirmDialog } from '../shared/ConfirmDialog'
 import type { SessionListItem } from '../../types/session'
 import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID } from '../../stores/tabStore'
@@ -59,6 +59,8 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen)
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const activeTabId = useTabStore((s) => s.activeTabId)
+  const tabs = useTabStore((s) => s.tabs)
+  const chatSessions = useChatStore((s) => s.sessions)
   const closeTab = useTabStore((s) => s.closeTab)
   const disconnectSession = useChatStore((s) => s.disconnectSession)
   const [searchQuery, setSearchQuery] = useState('')
@@ -130,6 +132,16 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
     () => new Map(sessions.map((session) => [session.id, session])),
     [sessions],
   )
+  const runningSessionIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const tab of tabs) {
+      if (tab.type === 'session' && tab.status === 'running') ids.add(tab.sessionId)
+    }
+    for (const [sessionId, sessionState] of Object.entries(chatSessions)) {
+      if (sessionState.chatState !== 'idle') ids.add(sessionId)
+    }
+    return ids
+  }, [chatSessions, tabs])
   const pendingBatchDeleteSessions = useMemo(
     () => (pendingBatchDeleteSessionIds ?? [])
       .map((sessionId) => sessionsById.get(sessionId))
@@ -986,14 +998,12 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                                         {t('sidebar.missingDir')}
                                       </span>
                                     )}
-                                    {isWorktreeSession(session) && (
-                                      <span className="flex-shrink-0 rounded bg-[var(--color-sidebar-item-hover)] px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
-                                        {t('sidebar.worktree')}
-                                      </span>
-                                    )}
-                                    <span className="flex-shrink-0 text-[10px] text-[var(--color-text-tertiary)] opacity-0 transition-opacity group-hover/session:opacity-100">
-                                      {formatRelativeTime(session.modifiedAt)}
-                                    </span>
+                                    <SessionRowMeta
+                                      isRunning={runningSessionIds.has(session.id)}
+                                      isWorktree={isWorktreeSession(session)}
+                                      modifiedAt={session.modifiedAt}
+                                      t={t}
+                                    />
                                   </span>
                                 </button>
                               )}
@@ -1793,6 +1803,50 @@ function ProjectMenuItem({
   )
 }
 
+function SessionRowMeta({
+  isRunning,
+  isWorktree,
+  modifiedAt,
+  t,
+}: {
+  isRunning: boolean
+  isWorktree: boolean
+  modifiedAt: string
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string
+}) {
+  const relativeTime = formatRelativeTime(modifiedAt, t)
+  const updatedLabel = t('session.lastUpdated', { time: relativeTime })
+
+  return (
+    <span
+      className="ml-auto flex h-5 min-w-[78px] flex-shrink-0 items-center justify-end gap-1.5 text-[10px] font-medium tabular-nums text-[var(--color-text-tertiary)]"
+      title={updatedLabel}
+    >
+      {isRunning && (
+        <span
+          className="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center text-[var(--color-success)]"
+          aria-label={t('sidebar.sessionRunning')}
+          title={t('sidebar.sessionRunning')}
+        >
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin" strokeWidth={2.2} aria-hidden="true" />
+        </span>
+      )}
+      {isWorktree && (
+        <span
+          className="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px] text-[var(--color-text-tertiary)]"
+          title={t('sidebar.worktree')}
+        >
+          <GitBranch className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+          <span className="sr-only">{t('sidebar.worktree')}</span>
+        </span>
+      )}
+      <span className="inline-flex min-w-[42px] flex-shrink-0 items-center justify-end">
+        <span>{relativeTime}</span>
+      </span>
+    </span>
+  )
+}
+
 function NavItem({
   active,
   collapsed,
@@ -1834,16 +1888,23 @@ function NavItem({
   )
 }
 
-function formatRelativeTime(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
+function formatRelativeTime(
+  dateStr: string,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+): string {
+  const date = new Date(dateStr)
+  const timestamp = date.getTime()
+  if (!Number.isFinite(timestamp)) return ''
+
+  const diff = Date.now() - timestamp
   const min = Math.floor(diff / 60000)
-  if (min < 1) return 'now'
-  if (min < 60) return `${min}m`
+  if (min < 1) return t('session.timeJustNow')
+  if (min < 60) return t('session.timeMinutes', { n: min })
   const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h`
+  if (hr < 24) return t('session.timeHours', { n: hr })
   const day = Math.floor(hr / 24)
-  if (day < 30) return `${day}d`
-  return `${Math.floor(day / 30)}mo`
+  if (day < 30) return t('session.timeDays', { n: day })
+  return new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' }).format(date)
 }
 
 function GitHubIcon() {

@@ -17,6 +17,7 @@ import { computerUseApprovalService } from '../services/computerUseApprovalServi
 import { sessionService } from '../services/sessionService.js'
 import { SettingsService } from '../services/settingsService.js'
 import { ProviderService } from '../services/providerService.js'
+import { isOpenAIOfficialProviderId } from '../services/openaiOfficialProvider.js'
 import { diagnosticsService } from '../services/diagnosticsService.js'
 import { deriveTitle, generateTitle, saveAiTitle } from '../services/titleService.js'
 import { parseSlashCommand } from '../../utils/slashCommandParsing.js'
@@ -998,25 +999,39 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
       // CLI 发送 type:'user' 消息，其中 content 包含 tool_result 块
       const messages: ServerMessage[] = []
 
+      if (isCompactSummaryMessageContent(cliMsg.message?.content)) {
+        messages.push({
+          type: 'system_notification',
+          subtype: 'compact_summary',
+          message: cliMsg.message.content,
+          data: {
+            isSynthetic: cliMsg.isSynthetic,
+          },
+        })
+      }
+
       const localCommandOutput = extractLocalCommandOutput(
         cliMsg.message?.content,
       )
       if (localCommandOutput) {
-        const goalEvent = extractGoalEvent(
-          localCommandOutput,
-          streamState.pendingLocalCommand,
-        )
+        const pendingLocalCommand = streamState.pendingLocalCommand
         streamState.pendingLocalCommand = undefined
-        if (goalEvent) {
-          messages.push({
-            type: 'system_notification',
-            subtype: 'goal_event',
-            message: goalEvent.message,
-            data: goalEvent,
-          })
-        } else {
-          messages.push({ type: 'content_start', blockType: 'text' })
-          messages.push({ type: 'content_delta', text: localCommandOutput })
+        if (!isCompactLocalCommandOutput(localCommandOutput)) {
+          const goalEvent = extractGoalEvent(
+            localCommandOutput,
+            pendingLocalCommand,
+          )
+          if (goalEvent) {
+            messages.push({
+              type: 'system_notification',
+              subtype: 'goal_event',
+              message: goalEvent.message,
+              data: goalEvent,
+            })
+          } else {
+            messages.push({ type: 'content_start', blockType: 'text' })
+            messages.push({ type: 'content_delta', text: localCommandOutput })
+          }
         }
       }
 
@@ -1224,6 +1239,10 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
     case 'system': {
       // 区分不同的 system 子类型
       const subtype = cliMsg.subtype
+      if (subtype === 'api_retry') {
+        const apiRetryMessage = toApiRetryServerMessage(cliMsg)
+        return apiRetryMessage ? [apiRetryMessage] : []
+      }
       if (subtype === 'init') {
         // CLI 初始化完成 — 缓存 slash commands 并发送模型信息
         // NOTE: Do NOT send status:idle here — the CLI init fires while
@@ -1256,6 +1275,16 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
             verb: typeof cliMsg.verb === 'string' ? cliMsg.verb : undefined,
           },
         }]
+      }
+      if (subtype === 'status') {
+        if (cliMsg.status === 'compacting') {
+          return [{
+            type: 'status',
+            state: 'compacting',
+            verb: 'Compacting conversation',
+          }]
+        }
+        return []
       }
       if (subtype === 'hook_started' || subtype === 'hook_response') {
         // Hook 执行中 — 不转发给前端
@@ -1360,6 +1389,58 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
 // ============================================================================
 // Helpers
 // ============================================================================
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function normalizeRetryCount(value: unknown): number | null {
+  const numeric = finiteNumber(value)
+  if (numeric === null) return null
+  return Math.max(0, Math.trunc(numeric))
+}
+
+function readRetryErrorRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function readRetryErrorString(value: unknown, keys: string[]): string | undefined {
+  const record = readRetryErrorRecord(value)
+  if (!record) return undefined
+  for (const key of keys) {
+    const candidate = record[key]
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
+  return undefined
+}
+
+function toApiRetryServerMessage(cliMsg: any): ServerMessage | null {
+  const attempt = normalizeRetryCount(cliMsg.attempt)
+  const maxRetries = normalizeRetryCount(cliMsg.max_retries)
+  const retryDelayMs = normalizeRetryCount(cliMsg.retry_delay_ms)
+  if (attempt === null || maxRetries === null || retryDelayMs === null) return null
+
+  const embeddedError = readRetryErrorRecord(cliMsg.error)
+  const embeddedStatus = embeddedError ? finiteNumber(embeddedError.status) : null
+  const rawStatus = cliMsg.error_status === null
+    ? null
+    : finiteNumber(cliMsg.error_status) ?? embeddedStatus
+  const errorType = typeof cliMsg.error === 'string' && cliMsg.error.trim()
+    ? cliMsg.error.trim()
+    : readRetryErrorString(cliMsg.error, ['type', 'code', 'name'])
+  const errorMessage = readRetryErrorString(cliMsg.error, ['message', 'error'])
+
+  return {
+    type: 'api_retry',
+    attempt,
+    maxRetries,
+    retryDelayMs,
+    errorStatus: rawStatus === null ? null : Math.trunc(rawStatus),
+    ...(errorType ? { errorType } : {}),
+    ...(errorMessage ? { errorMessage } : {}),
+  }
+}
 
 function sendMessage(ws: ServerWebSocket<WebSocketData>, message: ServerMessage) {
   ws.send(JSON.stringify(message))
@@ -1478,6 +1559,10 @@ function extractLocalCommandOutput(
   return null
 }
 
+function isCompactLocalCommandOutput(output: string): boolean {
+  return output.trim() === 'Compacted'
+}
+
 function extractTaggedContent(raw: string, tag: string): string | null {
   const match = raw.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))
   return match?.[1]?.trim() ?? null
@@ -1567,6 +1652,15 @@ function getCompactBoundaryMessage(cliMsg: any): string {
   return 'Context compacted'
 }
 
+function isCompactSummaryMessageContent(content: unknown): content is string {
+  return (
+    typeof content === 'string' &&
+    content.trim().startsWith(
+      'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.',
+    )
+  )
+}
+
 function rebindSessionOutput(
   sessionId: string,
   ws: ServerWebSocket<WebSocketData>,
@@ -1601,12 +1695,22 @@ type RuntimeSettings = {
   providerId?: string | null
 }
 
+function isKnownRuntimeProviderId(
+  providerId: string,
+  providers: Array<{ id: string }>,
+): boolean {
+  return (
+    isOpenAIOfficialProviderId(providerId) ||
+    providers.some((provider) => provider.id === providerId)
+  )
+}
+
 async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSettings> {
   const runtimeOverride = sessionId ? runtimeOverrides.get(sessionId) : undefined
   if (runtimeOverride) {
     if (typeof runtimeOverride.providerId === 'string') {
       const { providers } = await providerService.listProviders()
-      const providerExists = providers.some((provider) => provider.id === runtimeOverride.providerId)
+      const providerExists = isKnownRuntimeProviderId(runtimeOverride.providerId, providers)
       if (!providerExists) {
         console.warn(
           `[WS] Ignoring stale runtime provider id for ${sessionId}: ${runtimeOverride.providerId}`,
@@ -1639,7 +1743,7 @@ async function getDefaultRuntimeSettings(): Promise<RuntimeSettings> {
   // Check if a custom provider is active
   const { providers, activeId } = await providerService.listProviders()
   let resolvedActiveId = activeId
-  if (activeId && !providers.some((provider) => provider.id === activeId)) {
+  if (activeId && !isKnownRuntimeProviderId(activeId, providers)) {
     console.warn(`[WS] Active provider id is stale, falling back to official provider: ${activeId}`)
     resolvedActiveId = null
     await providerService.activateOfficial()

@@ -81,6 +81,10 @@ vi.mock('../components/settings/ClaudeOfficialLogin', () => ({
   ClaudeOfficialLogin: () => <div data-testid="claude-official-login" />,
 }))
 
+vi.mock('../components/settings/ChatGPTOfficialLogin', () => ({
+  ChatGPTOfficialLogin: () => <div data-testid="chatgpt-official-login" />,
+}))
+
 vi.mock('../pages/AdapterSettings', () => ({
   AdapterSettings: () => <div>Adapter Settings Mock</div>,
 }))
@@ -165,6 +169,10 @@ describe('Settings > General tab', () => {
       responseLanguage: '',
       uiZoom: 1,
       webSearch: { mode: 'auto', tavilyApiKey: '', braveApiKey: '' },
+      network: {
+        aiRequestTimeoutMs: 120_000,
+        proxy: { mode: 'system', url: '' },
+      },
       h5Access: {
         enabled: false,
         tokenPreview: null,
@@ -192,6 +200,9 @@ describe('Settings > General tab', () => {
       }),
       setWebSearch: vi.fn().mockImplementation(async (webSearch) => {
         useSettingsStore.setState({ webSearch })
+      }),
+      setNetwork: vi.fn().mockImplementation(async (network) => {
+        useSettingsStore.setState({ network })
       }),
       appMode: {
         mode: 'default',
@@ -249,7 +260,7 @@ describe('Settings > General tab', () => {
       updateH5AccessSettings: vi.fn(),
     })
 
-    useUIStore.setState({ pendingSettingsTab: null })
+    useUIStore.setState({ pendingSettingsTab: null, toasts: [] })
     useUpdateStore.setState({
       status: 'idle',
       availableVersion: null,
@@ -308,10 +319,74 @@ describe('Settings > General tab', () => {
 
     const notificationsHeading = screen.getByRole('heading', { name: 'System Notifications' })
     const uiZoomHeading = screen.getByRole('heading', { name: 'UI Zoom' })
+    const networkHeading = screen.getByRole('heading', { name: 'Network' })
     const webFetchHeading = screen.getByRole('heading', { name: 'WebFetch Preflight' })
 
     expect((notificationsHeading.compareDocumentPosition(uiZoomHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
-    expect((uiZoomHeading.compareDocumentPosition(webFetchHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    expect((uiZoomHeading.compareDocumentPosition(networkHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    expect((networkHeading.compareDocumentPosition(webFetchHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+  })
+
+  it('saves provider network timeout and manual proxy from General settings', async () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    expect(screen.getByRole('button', { name: /System proxy/i })).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: /Manual proxy/i }))
+    const proxyInput = screen.getByLabelText('Proxy URL')
+    const saveButton = screen.getAllByRole('button', { name: 'Save' })[0]!
+
+    expect(screen.getByText('Enter a proxy URL.')).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+
+    fireEvent.change(proxyInput, { target: { value: 'socks5://127.0.0.1:7890' } })
+    expect(screen.getByText('Enter an HTTP or HTTPS proxy URL.')).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+
+    fireEvent.change(proxyInput, { target: { value: '  http://127.0.0.1:7890  ' } })
+    const timeoutInput = screen.getByLabelText('AI request timeout')
+    expect(timeoutInput).toHaveAttribute('type', 'number')
+    expect(screen.queryByRole('slider', { name: 'AI request timeout' })).not.toBeInTheDocument()
+
+    fireEvent.change(timeoutInput, { target: { value: '180' } })
+
+    await act(async () => {
+      fireEvent.click(saveButton)
+    })
+
+    expect(useSettingsStore.getState().setNetwork).toHaveBeenCalledWith({
+      aiRequestTimeoutMs: 180_000,
+      proxy: {
+        mode: 'manual',
+        url: 'http://127.0.0.1:7890',
+      },
+    })
+    expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
+      type: 'success',
+      message: 'Network settings saved.',
+    })
+  })
+
+  it('validates typed provider network timeout and supports precise step controls', () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    const timeoutInput = screen.getByLabelText('AI request timeout')
+    const saveButton = screen.getAllByRole('button', { name: 'Save' })[0]!
+
+    fireEvent.change(timeoutInput, { target: { value: '700' } })
+    expect(screen.getByText('Enter a whole number from 5 to 600 seconds.')).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+
+    fireEvent.change(timeoutInput, { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Increase by 30 seconds' }))
+    expect(timeoutInput).toHaveValue(120)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Decrease by 30 seconds' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Decrease by 30 seconds' }))
+    expect(timeoutInput).toHaveValue(60)
+    expect(saveButton).not.toBeDisabled()
   })
 
   it('keeps data storage at the bottom of General settings', () => {
@@ -839,7 +914,8 @@ describe('Settings > General tab', () => {
     fireEvent.change(screen.getByLabelText('Tavily API key'), {
       target: { value: 'tvly-test-key' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    const saveButtons = screen.getAllByRole('button', { name: 'Save' })
+    fireEvent.click(saveButtons[saveButtons.length - 1]!)
 
     expect(useSettingsStore.getState().setWebSearch).toHaveBeenCalledWith({
       mode: 'tavily',
@@ -913,6 +989,16 @@ describe('Settings > Providers tab', () => {
     expect(screen.queryByTestId('claude-official-login')).not.toBeInTheDocument()
   })
 
+  it('does not query ChatGPT OAuth status before providers finish loading', () => {
+    providerStoreState.providers = []
+    providerStoreState.activeId = 'openai-official'
+    providerStoreState.hasLoadedProviders = false
+
+    render(<Settings />)
+
+    expect(screen.queryByTestId('chatgpt-official-login')).not.toBeInTheDocument()
+  })
+
   it('shows official OAuth status only after official provider is confirmed active', () => {
     providerStoreState.providers = []
     providerStoreState.activeId = null
@@ -921,6 +1007,20 @@ describe('Settings > Providers tab', () => {
     render(<Settings />)
 
     expect(screen.getByTestId('claude-official-login')).toBeInTheDocument()
+  })
+
+  it('shows ChatGPT Official as the active built-in provider', () => {
+    providerStoreState.providers = []
+    providerStoreState.activeId = 'openai-official'
+    providerStoreState.hasLoadedProviders = true
+
+    render(<Settings />)
+
+    const openAIProvider = screen.getByTestId('openai-official-provider')
+    expect(within(openAIProvider).getByText('ChatGPT Official')).toBeInTheDocument()
+    expect(within(openAIProvider).getByText('Default')).toBeInTheDocument()
+    expect(screen.getByTestId('chatgpt-official-login')).toBeInTheDocument()
+    expect(screen.queryByTestId('claude-official-login')).not.toBeInTheDocument()
   })
 
   it('requires confirmation before deleting a provider', async () => {

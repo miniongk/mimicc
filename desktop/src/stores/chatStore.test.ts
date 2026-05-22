@@ -148,6 +148,7 @@ function makeSession(overrides: Partial<PerSessionState> = {}): PerSessionState 
     tokenUsage: { input_tokens: 0, output_tokens: 0 },
     elapsedSeconds: 0,
     statusVerb: '',
+    apiRetry: null,
     slashCommands: [],
     agentTaskNotifications: {},
     backgroundAgentTasks: {},
@@ -172,6 +173,8 @@ describe('chatStore history mapping', () => {
     updateTabTitleMock.mockReset()
     updateTabStatusMock.mockReset()
     updateSessionTitleMock.mockReset()
+    vi.mocked(sessionsApi.getMessages).mockReset()
+    vi.mocked(sessionsApi.getMessages).mockResolvedValue({ messages: [] })
     sessionStoreSnapshot.sessions = []
     cliTaskStoreSnapshot.tasks = []
     cliTaskStoreSnapshot.sessionId = null
@@ -220,6 +223,81 @@ describe('chatStore history mapping', () => {
     expect(mapped[3]).toMatchObject({ parentToolUseId: 'agent-1' })
   })
 
+  it('maps compact boundary and summary history into one compact card', () => {
+    const messages: MessageEntry[] = [
+      {
+        id: 'old-user',
+        type: 'user',
+        content: 'Build the billing import flow',
+        timestamp: '2026-05-19T09:59:58.000Z',
+      },
+      {
+        id: 'old-assistant',
+        type: 'assistant',
+        content: 'Implemented the flow.',
+        timestamp: '2026-05-19T09:59:59.000Z',
+      },
+      {
+        id: 'compact-boundary',
+        type: 'system',
+        content: 'Conversation compacted',
+        timestamp: '2026-05-19T10:00:00.000Z',
+      },
+      {
+        id: 'compact-summary',
+        type: 'user',
+        content: [
+          'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.',
+          '',
+          'Kept the billing import implementation details and next verification steps.',
+          '',
+          'If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /tmp/transcript.jsonl',
+        ].join('\n'),
+        timestamp: '2026-05-19T10:00:01.000Z',
+      },
+    ]
+
+    const mapped = mapHistoryMessagesToUiMessages(messages)
+
+    expect(mapped).toHaveLength(1)
+    expect(mapped).toMatchObject([
+      {
+        type: 'compact_summary',
+        title: 'Context compacted',
+        summary: 'Kept the billing import implementation details and next verification steps.',
+      },
+    ])
+  })
+
+  it('drops compact local command stdout after mapping compact history', () => {
+    const messages: MessageEntry[] = [
+      {
+        id: 'compact-summary',
+        type: 'user',
+        content: [
+          'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.',
+          '',
+          'Kept the billing import implementation details.',
+        ].join('\n'),
+        timestamp: '2026-05-19T10:00:01.000Z',
+      },
+      {
+        id: 'compact-stdout',
+        type: 'user',
+        content: '<local-command-stdout>Compacted </local-command-stdout>',
+        timestamp: '2026-05-19T10:00:02.000Z',
+      },
+    ]
+
+    const mapped = mapHistoryMessagesToUiMessages(messages)
+
+    expect(mapped).toHaveLength(1)
+    expect(mapped[0]).toMatchObject({
+      type: 'compact_summary',
+      summary: 'Kept the billing import implementation details.',
+    })
+  })
+
   it('restores saved memory system events from transcript history', () => {
     const messages: MessageEntry[] = [
       {
@@ -247,6 +325,44 @@ describe('chatStore history mapping', () => {
             action: 'saved',
           },
         ],
+      },
+    ])
+  })
+
+  it('preserves transcript message ids on natural-language history messages', () => {
+    const messages: MessageEntry[] = [
+      {
+        id: 'transcript-user-1',
+        type: 'user',
+        timestamp: '2026-04-06T00:00:00.000Z',
+        content: '请从这里继续',
+      },
+      {
+        id: 'transcript-assistant-1',
+        type: 'assistant',
+        timestamp: '2026-04-06T00:00:01.000Z',
+        model: 'opus',
+        content: [
+          { type: 'text', text: '这里是答复。' },
+          { type: 'tool_use', name: 'Read', id: 'tool-1', input: { file_path: 'src/App.tsx' } },
+        ],
+      },
+    ]
+
+    const mapped = mapHistoryMessagesToUiMessages(messages)
+
+    expect(mapped).toMatchObject([
+      {
+        id: 'transcript-user-1',
+        type: 'user_text',
+        transcriptMessageId: 'transcript-user-1',
+      },
+      {
+        type: 'assistant_text',
+        transcriptMessageId: 'transcript-assistant-1',
+      },
+      {
+        type: 'tool_use',
       },
     ])
   })
@@ -456,6 +572,143 @@ describe('chatStore history mapping', () => {
       description: 'Review app',
       summary: 'Agent completed',
     })
+  })
+
+  it('hydrates transcript ids for a just-completed live turn', async () => {
+    vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
+      messages: [
+        {
+          id: 'transcript-user-1',
+          type: 'user',
+          timestamp: '2026-04-06T00:00:00.000Z',
+          content: 'live prompt',
+        },
+        {
+          id: 'transcript-assistant-1',
+          type: 'assistant',
+          timestamp: '2026-04-06T00:00:01.000Z',
+          content: 'live answer',
+        },
+      ],
+    })
+
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: 'live prompt',
+              timestamp: 1,
+            },
+          ],
+          streamingText: 'live answer',
+          chatState: 'streaming',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 2 },
+    })
+
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+        {
+          type: 'user_text',
+          transcriptMessageId: 'transcript-user-1',
+        },
+        {
+          type: 'assistant_text',
+          transcriptMessageId: 'transcript-assistant-1',
+        },
+      ])
+    })
+  })
+
+  it('retries transcript id hydration after the assistant message is persisted', async () => {
+    vi.useFakeTimers()
+    vi.mocked(sessionsApi.getMessages)
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'transcript-user-1',
+            type: 'user',
+            timestamp: '2026-04-06T00:00:00.000Z',
+            content: 'live prompt',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'transcript-user-1',
+            type: 'user',
+            timestamp: '2026-04-06T00:00:00.000Z',
+            content: 'live prompt',
+          },
+          {
+            id: 'transcript-assistant-1',
+            type: 'assistant',
+            timestamp: '2026-04-06T00:00:01.000Z',
+            content: 'live answer',
+          },
+        ],
+      })
+
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: 'live prompt',
+              timestamp: 1,
+            },
+          ],
+          streamingText: 'live answer',
+          chatState: 'streaming',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 2 },
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(sessionsApi.getMessages).toHaveBeenCalledTimes(1)
+    const firstHydrationMessages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? []
+    expect(firstHydrationMessages[0]).toMatchObject({
+      type: 'user_text',
+      transcriptMessageId: 'transcript-user-1',
+    })
+    expect(firstHydrationMessages[1]).toMatchObject({
+      type: 'assistant_text',
+    })
+    expect(firstHydrationMessages[1]).not.toHaveProperty('transcriptMessageId')
+
+    await vi.advanceTimersByTimeAsync(750)
+
+    expect(sessionsApi.getMessages).toHaveBeenCalledTimes(2)
+    const secondHydrationMessages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? []
+    expect(secondHydrationMessages[0]).toMatchObject({
+      type: 'user_text',
+      transcriptMessageId: 'transcript-user-1',
+    })
+    expect(secondHydrationMessages[1]).toMatchObject({
+      type: 'assistant_text',
+      transcriptMessageId: 'transcript-assistant-1',
+    })
+
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
   })
 
   it('merges consecutive assistant text blocks when restoring transcript history', () => {
@@ -1464,6 +1717,64 @@ describe('chatStore history mapping', () => {
     vi.useRealTimers()
   })
 
+  it('marks a background shell task stopped when TaskStop returns before a task notification', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-19T13:34:19.000Z'))
+
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession(),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'system_notification',
+      subtype: 'task_started',
+      data: {
+        task_id: 'shell-task-1',
+        tool_use_id: 'shell-tool-1',
+        description: 'Start tap proxy',
+        task_type: 'local_bash',
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'TaskStop',
+      toolUseId: 'task-stop-1',
+      input: { task_id: 'shell-task-1' },
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_result',
+      toolUseId: 'task-stop-1',
+      isError: false,
+      content: JSON.stringify({
+        message: 'Successfully stopped task: shell-task-1 (tap proxy)',
+        task_id: 'shell-task-1',
+        task_type: 'local_bash',
+        command: 'tap proxy',
+      }),
+    })
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.backgroundAgentTasks?.['shell-task-1']).toMatchObject({
+      status: 'stopped',
+      taskType: 'local_bash',
+      description: 'tap proxy',
+    })
+    expect(session?.messages.find((message) => message.type === 'background_task')).toMatchObject({
+      type: 'background_task',
+      task: {
+        taskId: 'shell-task-1',
+        status: 'stopped',
+        taskType: 'local_bash',
+        description: 'tap proxy',
+      },
+    })
+
+    vi.useRealTimers()
+  })
+
   it('removes stale agent task transcript cards by matching tool use id', () => {
     useChatStore.setState({
       sessions: {
@@ -1574,11 +1885,14 @@ describe('chatStore history mapping', () => {
     ])
   })
 
-  it('renders compact boundary notifications as system messages', () => {
+  it('renders compact boundary notifications as compact summary cards', () => {
     useChatStore.setState({
       sessions: {
         [TEST_SESSION_ID]: {
-          messages: [],
+          messages: [
+            { id: 'old-user', type: 'user_text', content: 'Build the billing import flow', timestamp: 1 },
+            { id: 'old-assistant', type: 'assistant_text', content: 'Implemented the flow.', timestamp: 2 },
+          ],
           chatState: 'idle',
           connectionState: 'connected',
           streamingText: '',
@@ -1602,11 +1916,152 @@ describe('chatStore history mapping', () => {
       type: 'system_notification',
       subtype: 'compact_boundary',
       message: 'Context compacted',
+      data: { trigger: 'auto', pre_tokens: 120000 },
     })
 
-    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
-      { type: 'system', content: 'Context compacted' },
+    const messages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? []
+    expect(messages).toHaveLength(1)
+    expect(messages).toMatchObject([
+      {
+        type: 'compact_summary',
+        title: 'Context compacted',
+        trigger: 'auto',
+        preTokens: 120000,
+      },
     ])
+  })
+
+  it('attaches compact summary content to the latest compact card', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: {
+          messages: [],
+          chatState: 'compacting',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: 'Compacting conversation',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'system_notification',
+      subtype: 'compact_boundary',
+      message: 'Context compacted',
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'system_notification',
+      subtype: 'compact_summary',
+      message: [
+        'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.',
+        '',
+        'Implemented the billing report and verified export behavior.',
+        '',
+        'If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /tmp/session.jsonl',
+      ].join('\n'),
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.chatState).toBe('thinking')
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+      {
+        type: 'compact_summary',
+        summary: 'Implemented the billing report and verified export behavior.',
+      },
+    ])
+  })
+
+  it('tracks compacting status as an active chat state', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: {
+          messages: [
+            { id: 'old-user', type: 'user_text', content: 'old context', timestamp: 1 },
+          ],
+          chatState: 'thinking',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'status',
+      state: 'compacting',
+      verb: 'Compacting conversation',
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.chatState).toBe('compacting')
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.statusVerb).toBe('Compacting conversation')
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+      {
+        type: 'compact_summary',
+        phase: 'compacting',
+      },
+    ])
+    expect(updateTabStatusMock).toHaveBeenLastCalledWith(TEST_SESSION_ID, 'running')
+  })
+
+  it('tracks API retry status until the request finishes', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [],
+          chatState: 'thinking',
+          statusVerb: 'Thinking',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'api_retry',
+      attempt: 1,
+      maxRetries: 10,
+      retryDelayMs: 2500,
+      errorStatus: 503,
+      errorType: 'server_error',
+    })
+
+    const retryingSession = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(retryingSession?.chatState).toBe('thinking')
+    expect(retryingSession?.statusVerb).toBe('')
+    expect(retryingSession?.apiRetry).toMatchObject({
+      attempt: 1,
+      maxRetries: 10,
+      retryDelayMs: 2500,
+      errorStatus: 503,
+      errorType: 'server_error',
+    })
+    expect(updateTabStatusMock).toHaveBeenLastCalledWith(TEST_SESSION_ID, 'running')
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 0 },
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.apiRetry).toBeNull()
   })
 
   it('renders memory saved notifications as chat memory events', () => {

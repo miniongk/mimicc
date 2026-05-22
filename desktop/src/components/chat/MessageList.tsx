@@ -1,8 +1,9 @@
 import { useRef, useEffect, useMemo, memo, useState, useCallback, useLayoutEffect, type ReactNode } from 'react'
-import { ArrowDown, BookMarked, Bot, CheckCircle2, ChevronDown, ChevronRight, CircleStop, LoaderCircle, MessageCircle, Settings, Target, XCircle } from 'lucide-react'
+import { ArrowDown, BookMarked, Bot, CheckCircle2, ChevronDown, ChevronRight, CircleStop, FileStack, LoaderCircle, MessageCircle, Settings, Target, XCircle } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { sessionsApi, type SessionTurnCheckpoint } from '../../api/sessions'
 import { useChatStore } from '../../stores/chatStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { useTeamStore } from '../../stores/teamStore'
@@ -29,6 +30,7 @@ type ToolResult = Extract<UIMessage, { type: 'tool_result' }>
 type MemoryEvent = Extract<UIMessage, { type: 'memory_event' }>
 type GoalEvent = Extract<UIMessage, { type: 'goal_event' }>
 type BackgroundTaskEvent = Extract<UIMessage, { type: 'background_task' }>
+type CompactSummaryEvent = Extract<UIMessage, { type: 'compact_summary' }>
 
 type RenderItem =
   | { kind: 'tool_group'; toolCalls: ToolCall[]; id: string }
@@ -46,6 +48,11 @@ type RewindTurnTarget = {
   content: string
   expectedContent: string
   attachments?: Extract<UIMessage, { type: 'user_text' }>['attachments']
+}
+
+type BranchableMessageTarget = {
+  uiMessageId: string
+  transcriptMessageId: string
 }
 
 type TurnChangeCardModel = {
@@ -129,6 +136,80 @@ function ChatSelectionMenu({
       <MessageCircle size={21} strokeWidth={2.15} className="shrink-0 text-[var(--color-text-primary)]" aria-hidden="true" />
       <span>{t('chat.addSelectionToChat')}</span>
     </button>
+  )
+}
+
+function formatCompactTokenCount(tokens: number): string {
+  if (tokens >= 1000) return `${Math.round(tokens / 100) / 10}k`
+  return String(tokens)
+}
+
+function getCompactSummaryTitle(message: CompactSummaryEvent, t: ReturnType<typeof useTranslation>) {
+  if (message.trigger === 'auto') return t('chat.compactSummary.autoTitle')
+  if (message.trigger === 'manual') return t('chat.compactSummary.manualTitle')
+  if (!message.title || message.title === 'Context compacted' || message.title === 'Conversation compacted') {
+    return t('chat.compactSummary.title')
+  }
+  return message.title
+}
+
+function CompactStatusDivider({ message, state }: { message?: CompactSummaryEvent; state: 'compacting' | 'complete' }) {
+  const t = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const hasSummary = Boolean(message?.summary?.trim())
+  const meta = [
+    message?.trigger ? t(`chat.compactSummary.trigger.${message.trigger}` as TranslationKey) : null,
+    typeof message?.preTokens === 'number'
+      ? t('chat.compactSummary.tokens', { count: formatCompactTokenCount(message.preTokens) })
+      : null,
+    typeof message?.messagesSummarized === 'number'
+      ? t('chat.compactSummary.messages', { count: String(message.messagesSummarized) })
+      : null,
+  ].filter((item): item is string => Boolean(item))
+  const hasDetails = hasSummary || meta.length > 0
+  const title = state === 'compacting'
+    ? t('chat.compactSummary.compacting')
+    : message
+      ? getCompactSummaryTitle(message, t)
+      : t('chat.compactSummary.title')
+
+  return (
+    <section data-testid="compact-status-divider" className="my-4 w-full px-1">
+      <div className="flex w-full items-center gap-3">
+        <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden="true" />
+        <button
+          type="button"
+          aria-expanded={hasDetails ? expanded : undefined}
+          onClick={() => hasDetails && setExpanded((value) => !value)}
+          disabled={!hasDetails}
+          className="group inline-flex min-h-8 max-w-[min(78vw,520px)] items-center gap-2 rounded-md px-2.5 py-1 text-[13px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] disabled:cursor-default disabled:hover:text-[var(--color-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/30"
+        >
+          {state === 'compacting' ? (
+            <LoaderCircle size={16} strokeWidth={2.1} className="shrink-0 animate-spin text-[var(--color-text-tertiary)]" aria-hidden="true" />
+          ) : (
+            <FileStack size={16} strokeWidth={2.05} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+          )}
+          <span className="min-w-0 truncate font-medium text-[var(--color-text-primary)]">
+            {title}
+          </span>
+        </button>
+        <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden="true" />
+      </div>
+      {hasDetails && expanded && (
+        <div className="mx-auto mt-1.5 w-full max-w-[620px] rounded-md border border-[var(--color-border)]/65 bg-[var(--color-surface-container-lowest)] px-3 py-2">
+          {meta.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-x-2 gap-y-1 text-[11px] font-medium text-[var(--color-text-tertiary)]">
+              {meta.map((item) => <span key={item}>{item}</span>)}
+            </div>
+          )}
+          {message?.summary && (
+            <div className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--color-text-secondary)]">
+              {message.summary}
+            </div>
+          )}
+          </div>
+      )}
+    </section>
   )
 }
 
@@ -450,6 +531,48 @@ function isTurnResponseMessage(message: UIMessage) {
   )
 }
 
+function getBranchableMessageTargets(messages: UIMessage[]): Map<string, BranchableMessageTarget> {
+  const branchableTargets = new Map<string, BranchableMessageTarget>()
+  let currentTurnCandidates: Array<Extract<UIMessage, { type: 'user_text' | 'assistant_text' }>> = []
+  let hasResponseForCurrentTurn = false
+
+  const markCurrentTurnBranchable = () => {
+    if (!hasResponseForCurrentTurn) return
+    for (const candidate of currentTurnCandidates) {
+      if (!candidate.transcriptMessageId) continue
+      branchableTargets.set(candidate.id, {
+        uiMessageId: candidate.id,
+        transcriptMessageId: candidate.transcriptMessageId,
+      })
+    }
+  }
+
+  for (const message of messages) {
+    if (message.type === 'user_text') {
+      markCurrentTurnBranchable()
+      currentTurnCandidates = []
+      hasResponseForCurrentTurn = false
+      if (!message.pending && message.transcriptMessageId) {
+        currentTurnCandidates = [message]
+      }
+      continue
+    }
+
+    if (currentTurnCandidates.length === 0) continue
+
+    if (isTurnResponseMessage(message)) {
+      hasResponseForCurrentTurn = true
+    }
+
+    if (message.type === 'assistant_text' && message.transcriptMessageId) {
+      currentTurnCandidates.push(message)
+    }
+  }
+
+  markCurrentTurnBranchable()
+  return branchableTargets
+}
+
 export function getCompletedTurnTargets(messages: UIMessage[]): RewindTurnTarget[] {
   let userMessageIndex = -1
   const completedTurns: RewindTurnTarget[] = []
@@ -628,6 +751,7 @@ type MessageListProps = {
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48
 const MAX_SCROLL_SNAPSHOTS = 100
+const EMPTY_MESSAGES: UIMessage[] = []
 const CHAT_SCROLL_AREA_CLASS = [
   'chat-scroll-area',
   '[scrollbar-width:auto]',
@@ -685,6 +809,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const sessionState = useChatStore((s) =>
     resolvedSessionId ? s.sessions[resolvedSessionId] : undefined,
   )
+  const branchSession = useSessionStore((s) => s.branchSession)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const reloadHistory = useChatStore((s) => s.reloadHistory)
   const queueComposerPrefill = useChatStore((s) => s.queueComposerPrefill)
@@ -692,7 +817,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     resolvedSessionId ? Boolean(s.getMemberBySessionId(resolvedSessionId)) : false,
   )
   const addToast = useUIStore((s) => s.addToast)
-  const messages = sessionState?.messages ?? []
+  const messages = sessionState?.messages ?? EMPTY_MESSAGES
   const chatState = sessionState?.chatState ?? 'idle'
   const streamingText = sessionState?.streamingText ?? ''
   const activeThinkingId = sessionState?.activeThinkingId ?? null
@@ -700,6 +825,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const shouldFollowContentResize =
     streamingText.trim().length > 0 ||
     chatState === 'streaming' ||
+    chatState === 'compacting' ||
     chatState === 'tool_executing' ||
     (chatState === 'thinking' && Boolean(activeThinkingId))
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -713,9 +839,19 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const [turnChangeLoadError, setTurnChangeLoadError] = useState<string | null>(null)
   const [turnActionErrors, setTurnActionErrors] = useState<Record<string, string>>({})
   const [isLoadingTurnChangeCards, setIsLoadingTurnChangeCards] = useState(false)
+  const [branchingMessageId, setBranchingMessageId] = useState<string | null>(null)
   const [rewindingTurnId, setRewindingTurnId] = useState<string | null>(null)
   const [turnUndoConfirmTargetId, setTurnUndoConfirmTargetId] = useState<string | null>(null)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
+  const branchActionsDisabled =
+    isMemberSession ||
+    chatState !== 'idle' ||
+    streamingText.trim().length > 0 ||
+    Boolean(activeThinkingId) ||
+    Boolean(sessionState?.activeToolUseId) ||
+    Boolean(sessionState?.activeToolName)
+  const hasCompactingDivider = messages.some((message) =>
+    message.type === 'compact_summary' && message.phase === 'compacting')
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     shouldAutoScrollRef.current = true
@@ -841,6 +977,10 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const { toolResultMap, childToolCallsByParent, renderItems } = useMemo(
     () => buildRenderModel(messages),
     [messages],
+  )
+  const branchableMessageTargets = useMemo(
+    () => branchActionsDisabled ? new Map<string, BranchableMessageTarget>() : getBranchableMessageTargets(messages),
+    [branchActionsDisabled, messages],
   )
   const completedTurnTargets = useMemo(() => getCompletedTurnTargets(messages), [messages])
   const latestCompletedTurnId =
@@ -982,6 +1122,29 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     t,
   ])
 
+  const handleBranchMessage = useCallback(async (target: BranchableMessageTarget) => {
+    if (!resolvedSessionId || branchingMessageId) return
+
+    setBranchingMessageId(target.uiMessageId)
+    try {
+      const result = await branchSession(resolvedSessionId, target.transcriptMessageId)
+      const title = result.title.trim() || t('sidebar.newSession')
+      useTabStore.getState().openTab(result.sessionId, title)
+      useChatStore.getState().connectToSession(result.sessionId)
+      addToast({
+        type: 'success',
+        message: t('chat.branchSuccess', { title }),
+      })
+    } catch (error) {
+      addToast({
+        type: 'error',
+        message: t('chat.branchError', { detail: getApiErrorMessage(error) }),
+      })
+    } finally {
+      setBranchingMessageId(null)
+    }
+  }, [addToast, branchSession, branchingMessageId, resolvedSessionId, t])
+
   return (
     <div className="relative min-h-0 flex-1">
       <div
@@ -1024,6 +1187,17 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
                           })()
                         : null
                     }
+                    branchAction={
+                      (() => {
+                        const branchTarget = branchableMessageTargets.get(item.message.id)
+                        if (!branchTarget) return undefined
+                        return {
+                          label: t('chat.branchFromHere'),
+                          loading: branchingMessageId === branchTarget.uiMessageId,
+                          onBranch: () => { void handleBranchMessage(branchTarget) },
+                        }
+                      })()
+                    }
                   />
                 )}
 
@@ -1050,8 +1224,12 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
             <AssistantMessage content={streamingText} isStreaming={chatState === 'streaming'} />
           )}
 
+          {chatState === 'compacting' && !hasCompactingDivider && (
+            <CompactStatusDivider state="compacting" />
+          )}
+
           {/* Show StreamingIndicator when:
-              - tool_executing: tool is running
+              - tool_executing: background work is running
               - thinking but no active ThinkingBlock yet: the gap between
                 sending a message and receiving the first thinking delta */}
           {(chatState === 'tool_executing' || (chatState === 'thinking' && !activeThinkingId)) && (
@@ -1112,12 +1290,18 @@ export const MessageBlock = memo(function MessageBlock({
   activeThinkingId,
   agentTaskNotifications,
   toolResult,
+  branchAction,
 }: {
   sessionId?: string | null
   message: UIMessage
   activeThinkingId: string | null
   agentTaskNotifications: Record<string, AgentTaskNotification>
   toolResult?: { content: unknown; isError: boolean } | null
+  branchAction?: {
+    label: string
+    loading?: boolean
+    onBranch: () => void
+  }
 }) {
   const t = useTranslation()
 
@@ -1133,6 +1317,7 @@ export const MessageBlock = memo(function MessageBlock({
           <UserMessage
             content={message.content}
             attachments={message.attachments}
+            branchAction={branchAction}
           />
         </SelectableChatMessage>
       )
@@ -1144,7 +1329,7 @@ export const MessageBlock = memo(function MessageBlock({
           role="assistant"
           content={message.content}
         >
-          <AssistantMessage content={message.content} />
+          <AssistantMessage content={message.content} branchAction={branchAction} />
         </SelectableChatMessage>
       )
     case 'thinking':
@@ -1213,6 +1398,8 @@ export const MessageBlock = memo(function MessageBlock({
       return <InlineTaskSummary tasks={message.tasks} />
     case 'memory_event':
       return <MemoryEventCard message={message} />
+    case 'compact_summary':
+      return <CompactStatusDivider message={message} state={message.phase === 'compacting' ? 'compacting' : 'complete'} />
     case 'goal_event':
       return <GoalEventCard message={message} />
     case 'background_task':

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { OFFICIAL_DEFAULT_MODEL_ID, OFFICIAL_MODELS } from '../../constants/modelCatalog'
+import {
+  OPENAI_OFFICIAL_DEFAULT_MODEL_ID,
+  OPENAI_OFFICIAL_MODELS,
+  OPENAI_OFFICIAL_PROVIDER_ID,
+} from '../../constants/openaiOfficialProvider'
 import { useTranslation } from '../../i18n'
 import { useChatStore } from '../../stores/chatStore'
 import { useProviderStore } from '../../stores/providerStore'
@@ -43,12 +48,17 @@ const VIEWPORT_MARGIN = 16
 const DROPDOWN_MAX_HEIGHT = 420
 const DROPDOWN_MIN_HEIGHT = 180
 
-function officialChoices(availableModels: ModelInfo[], isDefault: boolean, officialName: string): ProviderChoice {
+function officialChoices(
+  providerId: string | null,
+  models: ModelInfo[],
+  isDefault: boolean,
+  officialName: string,
+): ProviderChoice {
   return {
-    providerId: null,
+    providerId,
     providerName: officialName,
     isDefault,
-    models: availableModels.length > 0 ? availableModels : OFFICIAL_MODELS,
+    models,
   }
 }
 
@@ -89,10 +99,24 @@ function buildProviderChoices(
   activeId: string | null,
   availableModels: ModelInfo[],
   officialName: string,
+  openAIOfficialName: string,
   labels: Record<'main' | 'haiku' | 'sonnet' | 'opus', string>,
 ): ProviderChoice[] {
+  const claudeOfficialModels = activeId === null && availableModels.length > 0
+    ? availableModels
+    : OFFICIAL_MODELS
+  const openAIOfficialModels = activeId === OPENAI_OFFICIAL_PROVIDER_ID && availableModels.length > 0
+    ? availableModels
+    : OPENAI_OFFICIAL_MODELS
+
   return [
-    officialChoices(availableModels, activeId === null, officialName),
+    officialChoices(null, claudeOfficialModels, activeId === null, officialName),
+    officialChoices(
+      OPENAI_OFFICIAL_PROVIDER_ID,
+      openAIOfficialModels,
+      activeId === OPENAI_OFFICIAL_PROVIDER_ID,
+      openAIOfficialName,
+    ),
     ...providers.map((provider) => ({
       providerId: provider.id,
       providerName: provider.name,
@@ -116,7 +140,11 @@ function resolveDefaultRuntimeSelection(
 
   return {
     providerId: inferredProviderId,
-    modelId: currentModelId ?? OFFICIAL_DEFAULT_MODEL_ID,
+    modelId: currentModelId ?? (
+      inferredProviderId === OPENAI_OFFICIAL_PROVIDER_ID
+        ? OPENAI_OFFICIAL_DEFAULT_MODEL_ID
+        : OFFICIAL_DEFAULT_MODEL_ID
+    ),
   }
 }
 
@@ -258,8 +286,9 @@ export function ModelSelector({
     () => buildProviderChoices(
       providers,
       activeId,
-      activeId === null ? availableModels : OFFICIAL_MODELS,
+      availableModels,
       t('settings.providers.officialName'),
+      t('settings.providers.openaiOfficialName'),
       roleLabels,
     ),
     [activeId, availableModels, providers, roleLabels, t],

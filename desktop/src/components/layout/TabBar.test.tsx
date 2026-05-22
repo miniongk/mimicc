@@ -60,6 +60,7 @@ vi.mock('../../i18n', () => ({
       'tabs.closeAllConfirmTitle': 'Sessions Running',
       'tabs.closeAllConfirmMessage': '{count} sessions still running',
       'tabs.closeAllConfirmStop': 'Stop All & Close',
+      'tabs.sessionRunning': 'Session running',
       'tabs.openTerminal': 'Open Terminal',
       'tabs.showWorkspace': 'Show Workspace',
       'tabs.hideWorkspace': 'Hide Workspace',
@@ -833,5 +834,35 @@ describe('TabBar', () => {
     expect(disconnectSession).toHaveBeenCalledWith('tab-thinking')
     expect(disconnectSession).toHaveBeenCalledWith('tab-idle')
     expect(useTabStore.getState().tabs).toEqual([])
+  })
+
+  it('shows a running marker on tabs from tab status or live chat state', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-status-running', title: 'Status Running', type: 'session', status: 'running' },
+        { sessionId: 'tab-chat-running', title: 'Chat Running', type: 'session', status: 'idle' },
+        { sessionId: 'tab-idle', title: 'Idle', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-status-running',
+    })
+    useChatStore.setState({
+      sessions: {
+        'tab-status-running': makeChatSession('idle'),
+        'tab-chat-running': makeChatSession('thinking'),
+        'tab-idle': makeChatSession('idle'),
+      },
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    expect(screen.getAllByLabelText('Session running')).toHaveLength(2)
+    expect(screen.getByText('Idle').closest('[data-dragging]')?.querySelector('[aria-label="Session running"]')).toBeNull()
   })
 })
