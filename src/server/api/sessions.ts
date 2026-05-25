@@ -15,6 +15,7 @@
  *   PATCH  /api/sessions/:id        — 重命名会话
  */
 
+import * as path from 'node:path'
 import { sessionService } from '../services/sessionService.js'
 import { conversationService } from '../services/conversationService.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
@@ -37,6 +38,7 @@ import {
   createSessionBranch,
   SessionBranchingError,
 } from '../../utils/sessionBranching.js'
+import { registerFilesystemAccessRoot } from '../services/filesystemAccessRoots.js'
 
 const workspaceService = new WorkspaceService(
   async (sessionId) => (
@@ -313,7 +315,11 @@ async function getSessionRepositoryContext(url: URL): Promise<Response> {
     throw ApiError.badRequest('workDir query parameter is required')
   }
 
-  return Response.json(await getRepositoryContext(workDir))
+  const context = await getRepositoryContext(workDir)
+  registerFilesystemAccessRoot(workDir)
+  registerFilesystemAccessRoot(context.workDir)
+  registerFilesystemAccessRoot(context.repoRoot)
+  return Response.json(context)
 }
 
 async function requireSessionWorkspace(sessionId: string): Promise<string> {
@@ -622,11 +628,17 @@ function chooseRicherUsage(
     : currentUsage
 }
 
+function sameResolvedPath(left: string | null | undefined, right: string | null | undefined): boolean {
+  if (!left || !right) return false
+  return path.resolve(left) === path.resolve(right)
+}
+
 async function getGitInfo(sessionId: string): Promise<Response> {
   const workDir = conversationService.getSessionWorkDir(sessionId) || await sessionService.getSessionWorkDir(sessionId)
   if (!workDir) {
     throw ApiError.notFound(`Session not found: ${sessionId}`)
   }
+  registerFilesystemAccessRoot(workDir)
   const launchInfo = await sessionService.getSessionLaunchInfo(sessionId).catch(() => null)
   const repository = launchInfo?.repository
   const worktreeSession = launchInfo?.worktreeSession
@@ -653,7 +665,16 @@ async function getGitInfo(sessionId: string): Promise<Response> {
       stderr: 'pipe',
     })
     const branchText = await new Response(branchProc.stdout).text()
-    const branch = sessionBranch || branchText.trim()
+    const gitBranch = branchText.trim() || null
+    const materializedWorktree = !!worktree && (
+      sameResolvedPath(workDir, worktree.path) ||
+      sameResolvedPath(workDir, worktree.plannedPath)
+    )
+    const branch = sessionBranch || (
+      materializedWorktree
+        ? (worktree.branch || gitBranch)
+        : gitBranch
+    )
 
     // Get repo name from remote or directory
     let repoName = ''

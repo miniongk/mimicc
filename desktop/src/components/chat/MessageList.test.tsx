@@ -123,7 +123,7 @@ describe('MessageList nested tool calls', () => {
     })
   })
 
-  it('keeps full long transcripts mounted so variable-height messages cannot leave spacer gaps', () => {
+  it('windows long transcripts instead of mounting every historical message at once', () => {
     useChatStore.setState({
       sessions: {
         [ACTIVE_TAB]: makeSessionState({
@@ -147,10 +147,217 @@ describe('MessageList nested tool calls', () => {
 
     const { container } = render(<MessageList />)
 
-    expect(screen.getByText('assistant transcript line 0')).toBeTruthy()
     expect(screen.getByText('assistant transcript line 219')).toBeTruthy()
-    expect(container.querySelectorAll('[data-message-shell="assistant"]').length).toBe(220)
+    expect(screen.queryByText('assistant transcript line 0')).toBeNull()
+    expect(container.querySelectorAll('[data-message-shell="assistant"]').length).toBeLessThan(220)
+    expect(container.querySelector('[data-virtual-message-item]')).not.toBeNull()
+    expect(container.querySelector('[data-virtual-spacer="top"]')).not.toBeNull()
+  })
+
+  it('keeps small transcripts fully mounted without deferred browser painting', () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'assistant-1',
+              type: 'assistant_text',
+              content: 'first assistant reply',
+              timestamp: 1,
+            },
+            {
+              id: 'assistant-2',
+              type: 'assistant_text',
+              content: 'second assistant reply',
+              timestamp: 2,
+            },
+          ],
+        }),
+      },
+    })
+
+    const { container } = render(<MessageList />)
+    const renderItems = container.querySelectorAll('.chat-render-item')
+
+    expect(renderItems).toHaveLength(2)
+    for (const item of renderItems) {
+      expect(item.className).not.toContain('content-visibility')
+      expect(item.className).not.toContain('contain-intrinsic-size')
+    }
     expect(container.querySelector('[data-virtual-message-item]')).toBeNull()
+  })
+
+  it('virtualizes short message lists when their content is very large', () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'user-huge',
+              type: 'user_text',
+              content: '超长设计内容 '.repeat(24_000),
+              timestamp: 1,
+            },
+            {
+              id: 'assistant-tail',
+              type: 'assistant_text',
+              content: 'latest assistant reply',
+              timestamp: 2,
+            },
+          ],
+        }),
+      },
+    })
+
+    const { container } = render(<MessageList />)
+
+    expect(container.querySelector('[data-virtual-message-item]')).not.toBeNull()
+    expect(screen.getByText('latest assistant reply')).toBeTruthy()
+  })
+
+  it('filters duplicate unresolved AskUserQuestion cards while a matching permission is pending', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'stale-ask',
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'stale-tool',
+        input: {
+          questions: [
+            {
+              question: 'Restore this context?',
+              options: [{ label: 'No' }, { label: 'Yes' }],
+            },
+          ],
+        },
+        timestamp: 1,
+      },
+      {
+        id: 'active-ask',
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'active-tool',
+        input: {
+          questions: [
+            {
+              question: 'Restore this context?',
+              options: [{ label: 'No' }, { label: 'Yes' }],
+            },
+          ],
+        },
+        timestamp: 2,
+      },
+    ]
+
+    const { renderItems } = buildRenderModel(messages, 'active-tool')
+
+    expect(renderItems).toHaveLength(1)
+    expect(renderItems[0]).toMatchObject({
+      kind: 'message',
+      message: {
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'active-tool',
+      },
+    })
+  })
+
+  it('keeps resolved AskUserQuestion history visible when filtering active duplicates', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'answered-ask',
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'answered-tool',
+        input: {
+          questions: [
+            {
+              question: 'Already answered?',
+              options: [{ label: 'No' }, { label: 'Yes' }],
+            },
+          ],
+        },
+        timestamp: 1,
+      },
+      {
+        id: 'answered-result',
+        type: 'tool_result',
+        toolUseId: 'answered-tool',
+        content: { answers: { 'Already answered?': 'Yes' } },
+        isError: false,
+        timestamp: 2,
+      },
+      {
+        id: 'active-ask',
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'active-tool',
+        input: {
+          questions: [
+            {
+              question: 'Restore this context?',
+              options: [{ label: 'No' }, { label: 'Yes' }],
+            },
+          ],
+        },
+        timestamp: 3,
+      },
+    ]
+
+    const { renderItems } = buildRenderModel(messages, 'active-tool')
+
+    expect(renderItems).toHaveLength(2)
+    expect(renderItems.map((item) => item.kind === 'message' && item.message.type === 'tool_use'
+      ? item.message.toolUseId
+      : null,
+    )).toEqual(['answered-tool', 'active-tool'])
+  })
+
+  it('keeps only the latest unresolved AskUserQuestion when no pending permission is active', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'first-ask',
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'first-tool',
+        input: {
+          questions: [
+            {
+              question: 'First question?',
+              options: [{ label: 'A' }, { label: 'B' }],
+            },
+          ],
+        },
+        timestamp: 1,
+      },
+      {
+        id: 'second-ask',
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'second-tool',
+        input: {
+          questions: [
+            {
+              question: 'Second question?',
+              options: [{ label: 'A' }, { label: 'B' }],
+            },
+          ],
+        },
+        timestamp: 2,
+      },
+    ]
+
+    const { renderItems } = buildRenderModel(messages, null)
+
+    expect(renderItems).toHaveLength(1)
+    expect(renderItems[0]).toMatchObject({
+      kind: 'message',
+      message: {
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'second-tool',
+      },
+    })
   })
 
   it('renders goal events as visible status cards', () => {
@@ -355,7 +562,7 @@ describe('MessageList nested tool calls', () => {
     expect(screen.queryByText('local_agent')).toBeNull()
   })
 
-  it('restores the full transcript when scrolling away from latest', async () => {
+  it('renders the historical window when scrolling away from latest', async () => {
     useChatStore.setState({
       sessions: {
         [ACTIVE_TAB]: makeSessionState({
@@ -381,11 +588,11 @@ describe('MessageList nested tool calls', () => {
     })
 
     expect(screen.getByText('assistant transcript line 0')).toBeTruthy()
-    expect(screen.getByText('assistant transcript line 219')).toBeTruthy()
-    expect(container.querySelectorAll('[data-message-shell="assistant"]').length).toBe(220)
+    expect(screen.queryByText('assistant transcript line 219')).toBeNull()
+    expect(container.querySelectorAll('[data-message-shell="assistant"]').length).toBeLessThan(220)
   })
 
-  it('keeps long histories with tool-call groups mounted while scrolling history', async () => {
+  it('keeps tool-call groups reachable while scrolling virtualized history', async () => {
     useChatStore.setState({
       sessions: {
         [ACTIVE_TAB]: makeSessionState({
@@ -423,7 +630,7 @@ describe('MessageList nested tool calls', () => {
     Object.defineProperty(scrollArea, 'scrollHeight', { configurable: true, value: 222 * 112 })
     await waitForProgrammaticScrollReset()
 
-    expect(screen.getByText('Read')).toBeTruthy()
+    expect(screen.queryByText('Read')).toBeNull()
     expect(screen.getByText('assistant transcript line 219')).toBeTruthy()
 
     scrollArea.scrollTop = 0
@@ -432,8 +639,51 @@ describe('MessageList nested tool calls', () => {
     })
 
     expect(screen.getByText('Read')).toBeTruthy()
-    expect(screen.getByText('assistant transcript line 219')).toBeTruthy()
-    expect(container.querySelector('[data-virtual-message-item]')).toBeNull()
+    expect(screen.queryByText('assistant transcript line 219')).toBeNull()
+    expect(container.querySelector('[data-virtual-message-item]')).not.toBeNull()
+  })
+
+  it('splits large virtualization spacers into content-visibility chunks', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: Array.from({ length: 240 }, (_, index) => ({
+            id: `assistant-${index}`,
+            type: 'assistant_text',
+            content: `assistant transcript line ${index}`,
+            timestamp: index,
+          })),
+        }),
+      },
+    })
+
+    const { container } = render(<MessageList />)
+    const scrollArea = container.querySelector('.chat-scroll-area') as HTMLElement
+    Object.defineProperty(scrollArea, 'clientHeight', { configurable: true, value: 500 })
+    Object.defineProperty(scrollArea, 'scrollHeight', { configurable: true, value: 240 * 200 })
+    await waitForProgrammaticScrollReset()
+
+    // Scroll to middle so both top and bottom spacers are present
+    scrollArea.scrollTop = 20_000
+    await act(async () => {
+      fireEvent.scroll(scrollArea)
+    })
+
+    const topChunks = container.querySelectorAll('[data-virtual-spacer-chunk="top"]')
+    const bottomChunks = container.querySelectorAll('[data-virtual-spacer-chunk="bottom"]')
+    expect(topChunks.length).toBeGreaterThan(1)
+    expect(bottomChunks.length).toBeGreaterThan(1)
+
+    const firstTopChunk = topChunks[0] as HTMLElement
+    expect(firstTopChunk.style.contentVisibility).toBe('auto')
+    expect(firstTopChunk.style.containIntrinsicSize).toMatch(/^0 \d+px$/)
+
+    // Items inside the active window must NOT carry content-visibility (this
+    // is the regression guard that previous content-visibility rollout hit).
+    const visibleItems = container.querySelectorAll('[data-virtual-message-item]')
+    for (const item of visibleItems) {
+      expect((item as HTMLElement).style.contentVisibility).toBe('')
+    }
   })
 
   it('renders sub-agent tool calls inline beneath the parent agent tool call', () => {
@@ -1589,6 +1839,78 @@ describe('MessageList nested tool calls', () => {
     expect(scrollTop).toBe(600)
   })
 
+  it('keeps auto-scrolling without reading scroll geometry synchronously', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          chatState: 'streaming',
+          messages: [
+            {
+              id: 'user-1',
+              type: 'user_text',
+              content: 'latest prompt',
+              timestamp: 1,
+            },
+          ],
+          streamingText: 'streaming',
+        }),
+      },
+    })
+
+    const { container } = render(<MessageList />)
+    const scroller = container.querySelector('.overflow-y-auto') as HTMLDivElement
+    const readScrollHeight = vi.fn(() => {
+      throw new Error('scrollHeight should not be read while pinning to bottom')
+    })
+    const readClientHeight = vi.fn(() => {
+      throw new Error('clientHeight should not be read while pinning to bottom')
+    })
+    let scrollTop = 552
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      get: readScrollHeight,
+    })
+    Object.defineProperty(scroller, 'clientHeight', {
+      configurable: true,
+      get: readClientHeight,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = value >= 1_000_000_000 ? 600 : value
+      },
+    })
+    Object.defineProperty(scroller, 'scrollTo', {
+      configurable: true,
+      value: vi.fn((options: ScrollToOptions | number, y?: number) => {
+        scroller.scrollTop = typeof options === 'number' ? y ?? 0 : options.top ?? 0
+      }),
+    })
+
+    await waitForProgrammaticScrollReset()
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [ACTIVE_TAB]: {
+            ...state.sessions[ACTIVE_TAB]!,
+            streamingText: 'streaming next token',
+          },
+        },
+      }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('streaming next token')).toBeTruthy()
+    })
+    await waitForProgrammaticScrollReset()
+
+    expect(scrollTop).toBe(600)
+    expect(readScrollHeight).not.toHaveBeenCalled()
+    expect(readClientHeight).not.toHaveBeenCalled()
+  })
+
   it('keeps mobile H5 streaming output pinned after the transcript height grows', async () => {
     const scrollIntoView = vi.fn()
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -2446,26 +2768,35 @@ describe('MessageList nested tool calls', () => {
     })
   })
 
-  it('hides branch actions while the current session is still running', () => {
+  it('hides branch actions for the in-progress turn while preserving them for completed turns', () => {
     useChatStore.setState({
       sessions: {
         [ACTIVE_TAB]: makeSessionState({
           chatState: 'streaming',
           streamingText: 'partial',
           messages: [
+            // Completed turn — should still show branch buttons
             {
               id: 'local-user-1',
               transcriptMessageId: 'transcript-user-1',
               type: 'user_text',
-              content: '从这里开始',
+              content: 'Starting point',
               timestamp: 1,
             },
             {
               id: 'local-assistant-1',
               transcriptMessageId: 'transcript-assistant-1',
               type: 'assistant_text',
-              content: '这是完成的答复。',
+              content: 'This is a completed reply.',
               timestamp: 2,
+            },
+            // In-progress turn (no response yet) — should NOT show branch buttons
+            {
+              id: 'local-user-2',
+              transcriptMessageId: 'transcript-user-2',
+              type: 'user_text',
+              content: 'A new question without a reply yet',
+              timestamp: 3,
             },
           ],
         }),
@@ -2474,7 +2805,19 @@ describe('MessageList nested tool calls', () => {
 
     render(<MessageList />)
 
-    expect(screen.queryByRole('button', { name: 'Fork a new conversation' })).toBeNull()
+    // Completed turn messages are still branchable
+    const branchButtons = screen.getAllByRole('button', { name: 'Fork a new conversation' })
+    expect(branchButtons).toHaveLength(2)
+
+    // The first user message should be branchable (has response)
+    expect(branchButtons[0]!.closest('[data-message-actions]')).toBeTruthy()
+    // The second user message should NOT appear in branch buttons
+    const secondUserBranchBtn = screen
+      .queryAllByRole('button', { name: 'Fork a new conversation' })
+      .filter((btn) =>
+        btn.closest('[data-message-actions]')?.textContent?.includes('A new question')
+      )
+    expect(secondUserBranchBtn).toHaveLength(0)
   })
 
   it('keeps historical sessions readable when turn checkpoint payloads are missing', async () => {

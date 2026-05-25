@@ -179,6 +179,7 @@ describe('Settings > General tab', () => {
         allowedOrigins: [],
         publicBaseUrl: null,
       },
+      h5AccessDiagnostics: null,
       h5AccessError: null,
       setThinkingEnabled: vi.fn().mockImplementation(async (enabled: boolean) => {
         useSettingsStore.setState({ thinkingEnabled: enabled })
@@ -857,6 +858,7 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByText('H5 Access'))
     const section = screen.getByRole('region', { name: 'H5 Access' })
 
+    expect(within(section).getByLabelText('Access host / IP')).toHaveValue('https://phone.example/app')
     await act(async () => {
       fireEvent.click(within(section).getByRole('button', { name: 'Copy H5 URL' }))
     })
@@ -878,7 +880,35 @@ describe('Settings > General tab', () => {
     expect(within(section).getByText('H5 unavailable')).toBeInTheDocument()
   })
 
-  it('updates H5 public URL from General settings', async () => {
+  it('updates H5 host by reusing the current service port', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: [],
+        publicBaseUrl: 'http://172.20.16.1:54064',
+      },
+    })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('H5 Access'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    expect(within(section).getByLabelText('Current port')).toHaveValue('54064')
+    fireEvent.change(within(section).getByLabelText('Access host / IP'), {
+      target: { value: '192.168.1.100' },
+    })
+
+    await act(async () => {
+      fireEvent.click(within(section).getByRole('button', { name: 'Save H5 settings' }))
+    })
+
+    expect(useSettingsStore.getState().updateH5AccessSettings).toHaveBeenCalledWith({
+      publicBaseUrl: 'http://192.168.1.100:54064',
+    })
+  })
+
+  it('still accepts a full H5 public URL for reverse proxy setups', async () => {
     useSettingsStore.setState({
       h5Access: {
         enabled: false,
@@ -892,7 +922,7 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByText('H5 Access'))
 
     const section = screen.getByRole('region', { name: 'H5 Access' })
-    fireEvent.change(within(section).getByLabelText('Public URL'), {
+    fireEvent.change(within(section).getByLabelText('Access host / IP'), {
       target: { value: 'https://phone.example/app' },
     })
 
@@ -903,6 +933,100 @@ describe('Settings > General tab', () => {
     expect(useSettingsStore.getState().updateH5AccessSettings).toHaveBeenCalledWith({
       publicBaseUrl: 'https://phone.example/app',
     })
+  })
+
+  it('shows the stale-host banner and a one-click switch when the saved H5 host is unreachable', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: [],
+        publicBaseUrl: 'http://192.168.1.207:55379',
+      },
+      h5AccessDiagnostics: {
+        storedHostStaleness: 'unreachable',
+        storedPublicBaseUrl: 'http://192.168.1.207:55379',
+        effectivePublicBaseUrl: 'http://192.168.0.105:55379',
+        suggestedHost: '192.168.0.105',
+        localInterfaceHosts: ['192.168.0.105'],
+      },
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('H5 Access'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    const banner = within(section).getByTestId('h5-access-stale-host-banner')
+    expect(banner).toBeInTheDocument()
+    expect(banner.textContent).toContain('192.168.1.207')
+    expect(within(section).queryByTestId('h5-access-proxy-note')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(within(section).getByTestId('h5-access-stale-host-apply'))
+    })
+
+    expect(useSettingsStore.getState().updateH5AccessSettings).toHaveBeenCalledWith({
+      publicBaseUrl: 'http://192.168.0.105:55379',
+    })
+  })
+
+  it('shows the proxy note when the saved H5 URL is a reverse proxy', () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: [],
+        publicBaseUrl: 'https://h5.mydomain.com',
+      },
+      h5AccessDiagnostics: {
+        storedHostStaleness: 'proxy',
+        storedPublicBaseUrl: 'https://h5.mydomain.com',
+        effectivePublicBaseUrl: 'https://h5.mydomain.com',
+        suggestedHost: '192.168.0.105',
+        localInterfaceHosts: ['192.168.0.105'],
+      },
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('H5 Access'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    expect(within(section).getByTestId('h5-access-proxy-note')).toBeInTheDocument()
+    expect(within(section).queryByTestId('h5-access-stale-host-banner')).toBeNull()
+  })
+
+  it('shows the friendly backend reason when saving an H5 host that is not on any local interface', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: [],
+        publicBaseUrl: 'http://192.168.0.105:55379',
+      },
+      h5AccessDiagnostics: {
+        storedHostStaleness: 'ok',
+        storedPublicBaseUrl: 'http://192.168.0.105:55379',
+        effectivePublicBaseUrl: 'http://192.168.0.105:55379',
+        suggestedHost: '192.168.0.105',
+        localInterfaceHosts: ['192.168.0.105'],
+      },
+      updateH5AccessSettings: vi.fn().mockImplementation(async () => {
+        useSettingsStore.setState({
+          h5AccessError: 'H5 host 10.255.255.254 is not bound to any local network interface on this machine. Available LAN IPv4: 192.168.0.105',
+        })
+        throw new Error('rejected')
+      }),
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('H5 Access'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    fireEvent.change(within(section).getByLabelText('Access host / IP'), {
+      target: { value: '10.255.255.254' },
+    })
+    await act(async () => {
+      fireEvent.click(within(section).getByRole('button', { name: 'Save H5 settings' }))
+    })
+
+    expect(within(section).getByText(/10\.255\.255\.254/)).toBeInTheDocument()
   })
 
   it('saves WebSearch fallback provider settings', () => {

@@ -581,6 +581,39 @@ describe('SessionService', () => {
     expect(resultA.sessions[0]!.id).toBe(id1)
   })
 
+  it('should expose sourceSessionId and sourceMessageId for forked sessions', async () => {
+    const sourceSessionId = 'parent-session-0001-0000-0000-000000000000'
+    const forkSessionId = 'forked-session-0001-0000-0000-000000000000'
+    const forkMessageUuid = crypto.randomUUID()
+
+    await writeSessionFile('-tmp-project', forkSessionId, [
+      makeSnapshotEntry(),
+      {
+        parentUuid: null,
+        isSidechain: false,
+        type: 'user',
+        message: { role: 'user', content: 'Forked from parent' },
+        uuid: crypto.randomUUID(),
+        sessionId: forkSessionId,
+        timestamp: new Date().toISOString(),
+        cwd: '/tmp/project',
+        forkedFrom: {
+          sessionId: sourceSessionId,
+          messageUuid: forkMessageUuid,
+        },
+      },
+      makeAssistantEntry('Response in fork'),
+    ])
+
+    const result = await service.listSessions()
+    expect(result.total).toBe(1)
+
+    const session = result.sessions[0]!
+    expect(session.id).toBe(forkSessionId)
+    expect(session.sourceSessionId).toBe(sourceSessionId)
+    expect(session.sourceMessageId).toBe(forkMessageUuid)
+  })
+
   // --------------------------------------------------------------------------
   // getSession
   // --------------------------------------------------------------------------
@@ -641,6 +674,42 @@ describe('SessionService', () => {
 
     const messages = await service.getSessionMessages(sessionId)
     expect(messages).toHaveLength(2)
+  })
+
+  it('preserves structured toolUseResult metadata for AskUserQuestion answers', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-project', sessionId, [
+      makeSnapshotEntry(),
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'ask-1',
+              content: 'User has answered your questions: "Pick one?"="A". You can now continue with the user\'s answers in mind.',
+            },
+          ],
+        },
+        toolUseResult: {
+          questions: [{ question: 'Pick one?', options: [{ label: 'A' }] }],
+          answers: { 'Pick one?': 'A' },
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:01.000Z',
+      },
+    ])
+
+    const messages = await service.getSessionMessages(sessionId)
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      type: 'tool_result',
+      toolUseResult: {
+        answers: { 'Pick one?': 'A' },
+      },
+    })
   })
 
   it('should append subagent tool calls under their parent agent tool result', async () => {
@@ -1990,11 +2059,11 @@ describe('Sessions API', () => {
     }
   })
 
-  it('GET /api/sessions/:id/git-info should include isolated worktree identity', async () => {
+  it('GET /api/sessions/:id/git-info should keep the visible launch branch while including isolated worktree identity', async () => {
     const workDir = await createCleanGitRepo(tmpDir)
     const { sessionId } = await sessionService.createSession(
       workDir,
-      { branch: 'main', worktree: true },
+      { branch: 'feature/rail', worktree: true },
     )
     const launchInfo = await sessionService.getSessionLaunchInfo(sessionId)
     const repository = launchInfo?.repository
@@ -2002,7 +2071,7 @@ describe('Sessions API', () => {
     expect(repository?.worktreeBranch).toBeTruthy()
 
     const activeWorktree = repository!.worktreePath!
-    git(workDir, 'worktree', 'add', '-b', repository!.worktreeBranch!, activeWorktree, 'main')
+    git(workDir, 'worktree', 'add', '-b', repository!.worktreeBranch!, activeWorktree, 'feature/rail')
     const sessionsMap = (conversationService as any).sessions as Map<string, { workDir: string }>
 
     sessionsMap.set(sessionId, { workDir: activeWorktree })
@@ -2022,7 +2091,7 @@ describe('Sessions API', () => {
           branch: string | null
         } | null
       }
-      expect(body.branch).toBe('main')
+      expect(body.branch).toBe('feature/rail')
       expect(body.workDir).toBe(activeWorktree)
       expect(body.worktree).toEqual({
         enabled: true,

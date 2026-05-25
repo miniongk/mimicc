@@ -209,10 +209,87 @@ const COMPACT_SUMMARY_CUTOFFS = [
 let msgCounter = 0
 const nextId = () => `msg-${++msgCounter}-${Date.now()}`
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function readJsonStringLiteral(source: string, quoteIndex: number): string | undefined {
+  if (source[quoteIndex] !== '"') return undefined
+  let value = ''
+  for (let index = quoteIndex + 1; index < source.length; index += 1) {
+    const char = source[index]
+    if (char === '\\') {
+      const escaped = source[index + 1]
+      if (escaped === undefined) return undefined
+      value += char + escaped
+      index += 1
+      continue
+    }
+    if (char === '"') {
+      try {
+        return JSON.parse(`"${value}"`) as string
+      } catch {
+        return value
+      }
+    }
+    value += char
+  }
+  return undefined
+}
+
+function extractPartialJsonStringField(source: string, field: string): string | undefined {
+  const key = `"${field}"`
+  const keyIndex = source.indexOf(key)
+  if (keyIndex < 0) return undefined
+  const colonIndex = source.indexOf(':', keyIndex + key.length)
+  if (colonIndex < 0) return undefined
+
+  let valueIndex = colonIndex + 1
+  while (valueIndex < source.length && /\s/.test(source[valueIndex] ?? '')) {
+    valueIndex += 1
+  }
+  return readJsonStringLiteral(source, valueIndex)
+}
+
+function buildPartialToolInputPreview(
+  partialInput: string,
+  previousInput: unknown,
+): Record<string, unknown> {
+  const previous = isRecord(previousInput) ? previousInput : {}
+  const preview: Record<string, unknown> = { ...previous }
+  for (const field of ['file_path', 'filePath', 'path', 'command', 'pattern', 'url', 'query', 'description']) {
+    const value = extractPartialJsonStringField(partialInput, field)
+    if (value !== undefined) {
+      preview[field] = value
+    }
+  }
+  return preview
+}
+
+function upsertToolUseMessage(
+  messages: UIMessage[],
+  toolUseId: string,
+  build: (existing?: ToolCall) => ToolCall,
+): UIMessage[] {
+  const existingIndex = messages.findIndex(
+    (message): message is ToolCall =>
+      message.type === 'tool_use' && message.toolUseId === toolUseId,
+  )
+  if (existingIndex < 0) {
+    return [...messages, build()]
+  }
+
+  const next = [...messages]
+  next[existingIndex] = build(messages[existingIndex] as ToolCall)
+  return next
+}
+
 // Streaming throttle for content_delta. Buffers must be per-session because
 // multiple desktop tabs can stream at the same time.
 const pendingDeltaBySession = new Map<string, string>()
 const flushTimerBySession = new Map<string, ReturnType<typeof setTimeout>>()
+const pendingToolInputDeltaBySession = new Map<string, string>()
+const toolInputFlushTimerBySession = new Map<string, ReturnType<typeof setTimeout>>()
 
 function consumePendingDelta(sessionId: string): string {
   const flushTimer = flushTimerBySession.get(sessionId)
@@ -239,6 +316,33 @@ function clearPendingDelta(sessionId: string): void {
     flushTimerBySession.delete(sessionId)
   }
   pendingDeltaBySession.delete(sessionId)
+}
+
+function consumePendingToolInputDelta(sessionId: string): string {
+  const flushTimer = toolInputFlushTimerBySession.get(sessionId)
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    toolInputFlushTimerBySession.delete(sessionId)
+  }
+  const text = pendingToolInputDeltaBySession.get(sessionId) ?? ''
+  pendingToolInputDeltaBySession.delete(sessionId)
+  return text
+}
+
+function appendPendingToolInputDelta(sessionId: string, text: string): void {
+  pendingToolInputDeltaBySession.set(
+    sessionId,
+    `${pendingToolInputDeltaBySession.get(sessionId) ?? ''}${text}`,
+  )
+}
+
+function clearPendingToolInputDelta(sessionId: string): void {
+  const flushTimer = toolInputFlushTimerBySession.get(sessionId)
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    toolInputFlushTimerBySession.delete(sessionId)
+  }
+  pendingToolInputDeltaBySession.delete(sessionId)
 }
 
 function appendAssistantTextMessage(
@@ -322,20 +426,15 @@ function compactMetadataFromUnknown(data: unknown): Pick<CompactSummaryMessage, 
   }
 }
 
-function appendOrUpdateCompactSummary(
+function appendOrUpdateTailCompactSummary(
   messages: UIMessage[],
   update: Partial<Omit<CompactSummaryMessage, 'id' | 'type' | 'timestamp'>>,
   timestamp: number,
 ): UIMessage[] {
-  let existingIndex = -1
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.type === 'compact_summary') {
-      existingIndex = index
-      break
-    }
-  }
-  if (existingIndex >= 0) {
-    const existing = messages[existingIndex] as CompactSummaryMessage
+  const existingIndex = messages.length - 1
+  const existingMessage = messages[existingIndex]
+  if (existingMessage?.type === 'compact_summary') {
+    const existing = existingMessage
     const next: CompactSummaryMessage = {
       ...existing,
       ...update,
@@ -361,13 +460,12 @@ function appendOrUpdateCompactSummary(
   ]
 }
 
-function collapseToCompactSummary(
-  messages: UIMessage[],
-  update: Partial<Omit<CompactSummaryMessage, 'id' | 'type' | 'timestamp'>>,
-  timestamp: number,
-): UIMessage[] {
-  const existing = [...messages].reverse().find((message): message is CompactSummaryMessage => message.type === 'compact_summary')
-  return appendOrUpdateCompactSummary(existing ? [existing] : [], update, timestamp)
+function dropTailCompactingCompactSummary(messages: UIMessage[]): UIMessage[] {
+  const tail = messages[messages.length - 1]
+  if (tail?.type === 'compact_summary' && tail.phase === 'compacting') {
+    return messages.slice(0, -1)
+  }
+  return messages
 }
 
 function upsertBackgroundTaskMessage(
@@ -698,6 +796,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const text = consumePendingDelta(sessionId)
       set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, (sess) => ({ streamingText: sess.streamingText + text })) }))
     }
+    clearPendingToolInputDelta(sessionId)
     clearPendingTaskToolUseIds(sessionId)
     clearPendingToolParentUseIds(sessionId)
     wsManager.disconnect(sessionId)
@@ -863,6 +962,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const text = consumePendingDelta(sessionId)
       set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, (sess) => ({ streamingText: sess.streamingText + text })) }))
     }
+    clearPendingToolInputDelta(sessionId)
     set((s) => {
       const session = s.sessions[sessionId]
       if (!session) return s
@@ -1021,6 +1121,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   clearMessages: (sessionId) => {
     clearPendingTaskToolUseIds(sessionId)
     clearPendingToolParentUseIds(sessionId)
+    clearPendingToolInputDelta(sessionId)
     set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({
       messages: [],
       activeGoal: null,
@@ -1055,7 +1156,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             nextMessages = appendAssistantTextMessage(nextMessages, pendingText, Date.now())
           }
           if (msg.state === 'compacting') {
-            nextMessages = collapseToCompactSummary(
+            nextMessages = appendOrUpdateTailCompactSummary(
               nextMessages,
               {
                 title: 'Context compacted',
@@ -1063,6 +1164,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               },
               Date.now(),
             )
+          } else {
+            nextMessages = dropTailCompactingCompactSummary(nextMessages)
           }
           return {
             chatState: preserveStreamingTurn ? 'streaming' : msg.state,
@@ -1074,7 +1177,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ...(msg.tokens ? { tokenUsage: { ...session.tokenUsage, output_tokens: msg.tokens } } : {}),
             ...(msg.state === 'idle' ? { activeThinkingId: null } : {}),
             ...(msg.state === 'idle' ? { apiRetry: null } : {}),
-            ...((shouldFlush || msg.state === 'compacting') ? { messages: nextMessages } : {}),
+            ...(nextMessages !== session.messages ? { messages: nextMessages } : {}),
             ...(shouldFlush ? {
               streamingText: '',
             } : pendingText !== session.streamingText ? { streamingText: pendingText } : {}),
@@ -1109,10 +1212,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             apiRetry: null,
           }))
         } else if (msg.blockType === 'tool_use') {
+          clearPendingToolInputDelta(sessionId)
           rememberPendingToolParentUseId(sessionId, msg.toolUseId, msg.parentToolUseId)
-          update(() => ({
-            activeToolUseId: msg.toolUseId ?? null,
-            activeToolName: msg.toolName ?? null,
+          const toolUseId = msg.toolUseId ?? null
+          const toolName = msg.toolName ?? 'unknown'
+          update((s) => ({
+            ...(toolUseId
+              ? {
+                  messages: upsertToolUseMessage(s.messages, toolUseId, (existing) => ({
+                    id: existing?.id ?? nextId(),
+                    type: 'tool_use',
+                    toolName,
+                    toolUseId,
+                    input: existing?.input ?? {},
+                    timestamp: existing?.timestamp ?? Date.now(),
+                    parentToolUseId: msg.parentToolUseId ?? existing?.parentToolUseId,
+                    isPending: true,
+                    partialInput: existing?.partialInput ?? '',
+                  })),
+                }
+              : {}),
+            activeToolUseId: toolUseId,
+            activeToolName: toolName,
             streamingToolInput: '',
             chatState: 'tool_executing',
             activeThinkingId: null,
@@ -1158,7 +1279,41 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             flushTimerBySession.set(sessionId, timer)
           }
         }
-        if (msg.toolInput !== undefined) update((s) => ({ streamingToolInput: s.streamingToolInput + msg.toolInput }))
+        if (msg.toolInput !== undefined) {
+          appendPendingToolInputDelta(sessionId, msg.toolInput)
+          if (!toolInputFlushTimerBySession.has(sessionId)) {
+            const timer = setTimeout(() => {
+              const text = consumePendingToolInputDelta(sessionId)
+              if (!text) return
+              update((s) => {
+                const partialInput = s.streamingToolInput + text
+                const activeToolUseId = s.activeToolUseId
+                return {
+                  streamingToolInput: partialInput,
+                  ...(activeToolUseId
+                    ? {
+                        messages: upsertToolUseMessage(s.messages, activeToolUseId, (existing) => {
+                          const toolName = existing?.toolName ?? s.activeToolName ?? 'unknown'
+                          return {
+                            id: existing?.id ?? nextId(),
+                            type: 'tool_use',
+                            toolName,
+                            toolUseId: activeToolUseId,
+                            input: buildPartialToolInputPreview(partialInput, existing?.input),
+                            timestamp: existing?.timestamp ?? Date.now(),
+                            parentToolUseId: existing?.parentToolUseId ?? getPendingToolParentUseId(sessionId, activeToolUseId),
+                            isPending: true,
+                            partialInput,
+                          }
+                        }),
+                      }
+                    : {}),
+                }
+              })
+            }, 50)
+            toolInputFlushTimerBySession.set(sessionId, timer)
+          }
+        }
         break
 
       case 'thinking':
@@ -1184,17 +1339,30 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
 
       case 'tool_use_complete': {
+        clearPendingToolInputDelta(sessionId)
         const session = get().sessions[sessionId]
         const toolName = msg.toolName || session?.activeToolName || 'unknown'
         const toolUseId = msg.toolUseId || session?.activeToolUseId || ''
         const parentToolUseId = msg.parentToolUseId ?? getPendingToolParentUseId(sessionId, toolUseId)
         rememberPendingToolParentUseId(sessionId, toolUseId, parentToolUseId)
         update((s) => ({
-          messages: [...s.messages, {
-            id: nextId(), type: 'tool_use', toolName,
-            toolUseId,
-            input: msg.input, timestamp: Date.now(), parentToolUseId,
-          }],
+          messages: toolUseId
+            ? upsertToolUseMessage(s.messages, toolUseId, (existing) => ({
+                id: existing?.id ?? nextId(),
+                type: 'tool_use',
+                toolName,
+                toolUseId,
+                input: msg.input,
+                timestamp: existing?.timestamp ?? Date.now(),
+                parentToolUseId,
+                isPending: false,
+              }))
+            : [...s.messages, {
+                id: nextId(), type: 'tool_use', toolName,
+                toolUseId,
+                input: msg.input, timestamp: Date.now(), parentToolUseId,
+                isPending: false,
+              }],
           activeToolUseId: null, activeToolName: null, activeThinkingId: null, streamingToolInput: '',
         }))
         if (toolName === 'TodoWrite' && Array.isArray((msg.input as any)?.todos)) {
@@ -1348,12 +1516,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           if (pendingText.trim()) {
             newMessages = appendAssistantTextMessage(newMessages, pendingText, Date.now())
           }
+          newMessages = dropTailCompactingCompactSummary(newMessages)
           newMessages = [...newMessages, { id: nextId(), type: 'error', message: msg.message, code: msg.code, timestamp: Date.now() }]
           return {
             messages: newMessages,
             chatState: 'idle',
             activeThinkingId: null,
             streamingText: '',
+            statusVerb: '',
             pendingPermission: null,
             pendingComputerUsePermission: null,
             apiRetry: null,
@@ -1439,7 +1609,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           update((session) => ({
             chatState: session.chatState === 'compacting' ? 'thinking' : session.chatState,
             statusVerb: session.chatState === 'compacting' ? '' : session.statusVerb,
-            messages: collapseToCompactSummary(
+            messages: appendOrUpdateTailCompactSummary(
               session.messages,
               {
                 title: typeof msg.message === 'string' && msg.message.trim()
@@ -1456,13 +1626,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const summary = extractCompactSummaryContent(msg.message)
           if (summary) {
             update((session) => ({
-              messages: collapseToCompactSummary(
+              messages: appendOrUpdateTailCompactSummary(
                 session.messages,
                 {
                   title: 'Context compacted',
                   phase: 'complete',
                   summary,
-                  trigger: 'auto',
                   ...compactMetadataFromUnknown(msg.data),
                 },
                 Date.now(),
@@ -1664,6 +1833,16 @@ function readNonEmptyString(record: Record<string, unknown>, ...keys: string[]):
 function readRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   return value as Record<string, unknown>
+}
+
+function normalizeHistoryToolResultContent(content: unknown, toolUseResult: unknown): unknown {
+  const result = readRecord(toolUseResult)
+  const answers = readRecord(result?.answers)
+  if (!result || !answers || !Array.isArray(result.questions)) return content
+  return {
+    questions: result.questions,
+    answers,
+  }
 }
 
 function parseJsonRecord(value: unknown): Record<string, unknown> | null {
@@ -2198,7 +2377,7 @@ export function mapHistoryMessagesToUiMessages(
     const timestamp = new Date(msg.timestamp).getTime()
     if (msg.type === 'system' && typeof msg.content === 'string') {
       if (msg.content.trim() === 'Conversation compacted' || msg.content.trim() === 'Context compacted') {
-        const compactMessages = collapseToCompactSummary(
+        const compactMessages = appendOrUpdateTailCompactSummary(
           uiMessages,
           { title: 'Context compacted', phase: 'complete' },
           timestamp,
@@ -2244,13 +2423,12 @@ export function mapHistoryMessagesToUiMessages(
 
       const compactSummary = extractCompactSummaryContent(msg.content)
       if (compactSummary) {
-        const compactMessages = collapseToCompactSummary(
+        const compactMessages = appendOrUpdateTailCompactSummary(
           uiMessages,
           {
             title: 'Context compacted',
             phase: 'complete',
             summary: compactSummary,
-            trigger: 'auto',
           },
           timestamp,
         )
@@ -2317,7 +2495,15 @@ export function mapHistoryMessagesToUiMessages(
         }
         else if (block.type === 'image') attachments.push({ type: 'image', name: block.name || 'image', data: block.source?.data, mimeType: block.mimeType || block.media_type })
         else if (block.type === 'file') attachments.push({ type: 'file', name: block.name || 'file' })
-        else if (block.type === 'tool_result') uiMessages.push({ id: nextId(), type: 'tool_result', toolUseId: block.tool_use_id ?? '', content: block.content, isError: !!block.is_error, timestamp, parentToolUseId: msg.parentToolUseId })
+        else if (block.type === 'tool_result') uiMessages.push({
+          id: nextId(),
+          type: 'tool_result',
+          toolUseId: block.tool_use_id ?? '',
+          content: normalizeHistoryToolResultContent(block.content, msg.toolUseResult),
+          isError: !!block.is_error,
+          timestamp,
+          parentToolUseId: msg.parentToolUseId,
+        })
       }
       if (textParts.length > 0 || attachments.length > 0) {
         const parsed = extractLeadingFileReferences(textParts.join('\n'))

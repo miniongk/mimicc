@@ -44,6 +44,16 @@ export type H5AccessSettings = {
   publicBaseUrl: string | null
 }
 
+export type H5HostStaleness = 'ok' | 'unreachable' | 'proxy' | 'unset'
+
+export type H5AccessDiagnostics = {
+  storedHostStaleness: H5HostStaleness
+  storedPublicBaseUrl: string | null
+  effectivePublicBaseUrl: string | null
+  suggestedHost: string | null
+  localInterfaceHosts: string[]
+}
+
 export type DesktopTerminalStartupShell =
   | 'system'
   | 'pwsh'

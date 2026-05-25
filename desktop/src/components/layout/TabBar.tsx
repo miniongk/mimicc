@@ -1,4 +1,5 @@
 import { forwardRef, useMemo, useRef, useState, useEffect, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import {
   SCHEDULED_TAB_ID,
   SETTINGS_TAB_ID,
@@ -44,7 +45,13 @@ export function TabBar() {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const setActiveTab = useTabStore((s) => s.setActiveTab)
   const closeTab = useTabStore((s) => s.closeTab)
-  const chatSessions = useChatStore((s) => s.sessions)
+  const sessionTabIds = useMemo(
+    () => tabs.filter((tab) => isSessionTab(tab)).map((tab) => tab.sessionId),
+    [tabs],
+  )
+  const activeChatSessionIds = useChatStore(useShallow((s) =>
+    sessionTabIds.filter((sessionId) => s.sessions[sessionId]?.chatState !== 'idle')
+  ))
   const disconnectSession = useChatStore((s) => s.disconnectSession)
   const activeTab = tabs.find((tab) => tab.sessionId === activeTabId) ?? null
   const isActiveSessionTab = isSessionTab(activeTab) || isSessionTabId(activeTabId)
@@ -81,11 +88,11 @@ export function TabBar() {
     for (const tab of tabs) {
       if (isSessionTab(tab) && tab.status === 'running') ids.add(tab.sessionId)
     }
-    for (const [sessionId, sessionState] of Object.entries(chatSessions)) {
-      if (sessionState.chatState !== 'idle') ids.add(sessionId)
+    for (const sessionId of activeChatSessionIds) {
+      ids.add(sessionId)
     }
     return ids
-  }, [chatSessions, tabs])
+  }, [activeChatSessionIds, tabs])
 
   useEffect(() => {
     if (!isTauri) return

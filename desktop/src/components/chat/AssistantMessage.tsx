@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import { MessageActionBar, type MessageBranchAction } from './MessageActionBar'
 import { InlineImageGallery } from './InlineImageGallery'
@@ -8,7 +9,7 @@ type Props = {
   branchAction?: MessageBranchAction
 }
 
-export function AssistantMessage({ content, isStreaming, branchAction }: Props) {
+export const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, branchAction }: Props) {
   if (!content.trim()) return null
 
   const documentLayout = shouldUseDocumentLayout(content)
@@ -27,7 +28,11 @@ export function AssistantMessage({ content, isStreaming, branchAction }: Props) 
         <div className={`rounded-[20px] rounded-tl-[8px] border border-[var(--color-border)]/60 bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text-primary)] shadow-sm ${
           documentLayout ? 'w-full' : 'max-w-full'
         }`}>
-          <MarkdownRenderer content={content} variant={documentLayout ? 'document' : 'default'} />
+          <MarkdownRenderer
+            content={content}
+            variant={documentLayout ? 'document' : 'default'}
+            streaming={isStreaming}
+          />
           {!isStreaming && <InlineImageGallery text={content} />}
           {isStreaming && (
             <span className="ml-0.5 inline-block h-4 w-0.5 animate-shimmer bg-[var(--color-brand)] align-text-bottom" />
@@ -43,7 +48,7 @@ export function AssistantMessage({ content, isStreaming, branchAction }: Props) 
       </div>
     </div>
   )
-}
+})
 
 function shouldUseDocumentLayout(content: string) {
   const normalized = content.trim()

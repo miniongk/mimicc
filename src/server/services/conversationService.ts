@@ -67,10 +67,20 @@ type SessionProcess = {
     string,
     {
       toolName: string
+      toolUseId?: string
+      description?: string
       input: Record<string, unknown>
       permissionSuggestions?: unknown[]
     }
   >
+}
+
+export type PendingPermissionRequest = {
+  requestId: string
+  toolName: string
+  toolUseId?: string
+  input: Record<string, unknown>
+  description?: string
 }
 
 type SessionStartOptions = {
@@ -577,6 +587,19 @@ export class ConversationService {
     return session?.permissionMode || 'default'
   }
 
+  getPendingPermissionRequests(sessionId: string): PendingPermissionRequest[] {
+    const session = this.sessions.get(sessionId)
+    if (!session) return []
+
+    return Array.from(session.pendingPermissionRequests.entries()).map(([requestId, request]) => ({
+      requestId,
+      toolName: request.toolName,
+      ...(request.toolUseId ? { toolUseId: request.toolUseId } : {}),
+      input: request.input,
+      ...(request.description ? { description: request.description } : {}),
+    }))
+  }
+
   authorizeSdkConnection(
     sessionId: string,
     token: string | null | undefined,
@@ -648,14 +671,34 @@ export class ConversationService {
               typeof msg.request.tool_name === 'string'
                 ? msg.request.tool_name
                 : 'Unknown',
+            toolUseId:
+              typeof msg.request.tool_use_id === 'string' && msg.request.tool_use_id.trim()
+                ? msg.request.tool_use_id
+                : undefined,
             input:
               msg.request.input && typeof msg.request.input === 'object'
                 ? (msg.request.input as Record<string, unknown>)
                 : {},
+            description:
+              typeof msg.request.description === 'string' && msg.request.description.trim()
+                ? msg.request.description
+                : undefined,
             permissionSuggestions: Array.isArray(msg.request.permission_suggestions)
               ? msg.request.permission_suggestions
               : undefined,
           })
+        }
+        if (
+          (msg?.type === 'control_cancel_request' || msg?.type === 'control_response') &&
+          typeof msg.request_id === 'string'
+        ) {
+          session.pendingPermissionRequests.delete(msg.request_id)
+        }
+        if (
+          msg?.type === 'control_response' &&
+          typeof msg.response?.request_id === 'string'
+        ) {
+          session.pendingPermissionRequests.delete(msg.response.request_id)
         }
         for (const cb of session.outputCallbacks) {
           cb(msg)

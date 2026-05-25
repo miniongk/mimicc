@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
 import { ModelSelector } from './ModelSelector'
 import { useChatStore } from '../../stores/chatStore'
+import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
+import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -28,6 +30,14 @@ afterEach(() => {
   useProviderStore.setState(useProviderStore.getInitialState(), true)
   useSessionRuntimeStore.setState(useSessionRuntimeStore.getInitialState(), true)
   useChatStore.setState(useChatStore.getInitialState(), true)
+  useHahaOAuthStore.setState(useHahaOAuthStore.getInitialState(), true)
+  useHahaOpenAIOAuthStore.setState(useHahaOpenAIOAuthStore.getInitialState(), true)
+})
+
+// Prevent real API calls from fetchStatus on mount
+beforeEach(() => {
+  useHahaOAuthStore.setState({ fetchStatus: async () => {} })
+  useHahaOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
 })
 
 describe('ModelSelector', () => {
@@ -135,6 +145,10 @@ describe('ModelSelector', () => {
       },
     ]
     const setSessionRuntime = vi.fn()
+    useHahaOpenAIOAuthStore.setState({
+      status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
+      fetchStatus: async () => {},
+    })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: openAIModels,
@@ -167,6 +181,45 @@ describe('ModelSelector', () => {
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
       modelId: 'gpt-5.5',
     })
+  })
+
+  it('hides official provider sections when OAuth is not logged in', async () => {
+    useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: 'Provider A',
+    })
+    useProviderStore.setState({
+      providers: [{
+        id: 'provider-a',
+        presetId: 'custom',
+        name: 'Provider A',
+        apiKey: '***',
+        baseUrl: 'https://api.example.com',
+        apiFormat: 'anthropic',
+        models: {
+          main: 'provider-main',
+          haiku: '',
+          sonnet: '',
+          opus: '',
+        },
+      }],
+      activeId: 'provider-a',
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+
+    render(<ModelSelector runtimeKey="session-hide" />)
+
+    await clickByRole(/alpha/i)
+
+    const dropdown = screen.getByTestId('model-selector-dropdown')
+    expect(dropdown.textContent).not.toContain('Claude Official')
+    expect(dropdown.textContent).not.toContain('ChatGPT Official')
+    expect(dropdown.textContent).toContain('Provider A')
   })
 
   it('portals the dropdown outside clipping containers and positions it below the trigger', async () => {

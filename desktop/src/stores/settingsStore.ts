@@ -9,6 +9,7 @@ import {
   type AppModeConfig,
   type DesktopTerminalSettings,
   type DesktopTerminalStartupShell,
+  type H5AccessDiagnostics,
   type H5AccessSettings,
   type NetworkSettings,
   type PermissionMode,
@@ -63,6 +64,7 @@ type SettingsStore = {
   updateProxy: UpdateProxySettings
   network: NetworkSettings
   h5Access: H5AccessSettings
+  h5AccessDiagnostics: H5AccessDiagnostics | null
   h5AccessError: string | null
   responseLanguage: string
   uiZoom: number
@@ -144,6 +146,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   updateProxy: DEFAULT_UPDATE_PROXY_SETTINGS,
   network: DEFAULT_NETWORK_SETTINGS,
   h5Access: DEFAULT_H5_ACCESS_SETTINGS,
+  h5AccessDiagnostics: null,
   h5AccessError: null,
   responseLanguage: '',
   uiZoom: readStoredAppZoomLevel(),
@@ -193,6 +196,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         updateProxy: normalizeUpdateProxySettings(userSettings.updateProxy),
         network: normalizeNetworkSettings(userSettings.network),
         h5Access: h5AccessResult.settings,
+        h5AccessDiagnostics: h5AccessResult.diagnostics,
         h5AccessError: h5AccessResult.error,
         responseLanguage: typeof userSettings.language === 'string' ? userSettings.language : '',
         isLoading: false,
@@ -208,7 +212,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   fetchH5Access: async () => {
     const result = await loadH5AccessSettings(get().h5Access)
-    set({ h5Access: result.settings, h5AccessError: result.error })
+    set({
+      h5Access: result.settings,
+      h5AccessDiagnostics: result.diagnostics,
+      h5AccessError: result.error,
+    })
   },
 
   setPermissionMode: async (mode) => {
@@ -350,6 +358,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         h5Access: normalizeH5AccessSettings(settings),
         h5AccessError: null,
       })
+      await refreshH5DiagnosticsSilent(set)
       return token
     } catch (error) {
       set({ h5AccessError: getErrorMessage(error, 'Failed to enable H5 access.') })
@@ -365,6 +374,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         h5Access: normalizeH5AccessSettings(settings),
         h5AccessError: null,
       })
+      await refreshH5DiagnosticsSilent(set)
     } catch (error) {
       set({ h5AccessError: getErrorMessage(error, 'Failed to disable H5 access.') })
       throw error
@@ -379,6 +389,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         h5Access: normalizeH5AccessSettings(settings),
         h5AccessError: null,
       })
+      await refreshH5DiagnosticsSilent(set)
       return token
     } catch (error) {
       set({ h5AccessError: getErrorMessage(error, 'Failed to regenerate the H5 token.') })
@@ -394,6 +405,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         h5Access: normalizeH5AccessSettings(settings),
         h5AccessError: null,
       })
+      await refreshH5DiagnosticsSilent(set)
     } catch (error) {
       set({ h5AccessError: getErrorMessage(error, 'Failed to update H5 access settings.') })
       throw error
@@ -511,26 +523,45 @@ function normalizeH5AccessSettings(settings: H5AccessSettings | undefined): H5Ac
   }
 }
 
+async function refreshH5DiagnosticsSilent(
+  set: (partial: Partial<SettingsStore>) => void,
+): Promise<void> {
+  // Best-effort diagnostics refresh. Failure here must not surface as an
+  // error on the main H5 action (enable/disable/regenerate/update), because
+  // the main action has already succeeded by the time we reach this point.
+  try {
+    const response = await h5AccessApi.get()
+    const diagnostics = response?.diagnostics ?? null
+    set({ h5AccessDiagnostics: diagnostics })
+  } catch {
+    // silent: keep previous diagnostics value
+  }
+}
+
 async function loadH5AccessSettings(previousH5Access: H5AccessSettings): Promise<{
   settings: H5AccessSettings
+  diagnostics: H5AccessDiagnostics | null
   error: string | null
 }> {
   try {
-    const { settings } = await h5AccessApi.get()
+    const { settings, diagnostics } = await h5AccessApi.get()
     return {
       settings: normalizeH5AccessSettings(settings),
+      diagnostics: diagnostics ?? null,
       error: null,
     }
   } catch (error) {
     if (isLegacyH5EndpointError(error)) {
       return {
         settings: DEFAULT_H5_ACCESS_SETTINGS,
+        diagnostics: null,
         error: null,
       }
     }
 
     return {
       settings: previousH5Access,
+      diagnostics: null,
       error: getErrorMessage(error, 'Failed to load H5 access settings.'),
     }
   }
