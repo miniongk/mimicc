@@ -124,6 +124,7 @@ export const en = {
   'workspace.addToChat': 'Add to chat',
   'workspace.addSelectionToChat': 'Add to chat',
   'workspace.copyPath': 'Copy path',
+  'workspace.copyAbsolutePath': 'Copy absolute path',
   'workspace.pathCopied': 'Path copied.',
   'workspace.localComment': 'Local comment',
   'workspace.commentLine': 'Comment line {line}',
@@ -178,6 +179,7 @@ export const en = {
   // Settings > Terminal
   'settings.terminal.title': 'Terminal',
   'settings.terminal.description': 'Run host-machine commands for plugin, skill, and MCP setup. The desktop app includes claude-haha; replace documented claude <args> with claude-haha <args>, for example: claude-haha plugin install ... or claude-haha mcp add ...',
+  'settings.terminal.infoLabel': 'Terminal setup help',
   'settings.terminal.clear': 'Clear',
   'settings.terminal.restart': 'Restart',
   'settings.terminal.windowTitle': 'Host shell',
@@ -467,7 +469,7 @@ export const en = {
 
   // Settings > MCP
   'settings.mcp.title': 'MCP servers',
-  'settings.mcp.description': 'Connect external tools and data sources for Claude Code. Add, edit, reconnect, and disable servers without leaving the desktop app.',
+  'settings.mcp.description': 'Connect external tools and data sources for Claude Code. Local, project, and user scopes follow the same behavior as the CLI.',
   'settings.mcp.addServer': 'Add server',
   'settings.mcp.empty': 'No MCP servers configured yet',
   'settings.mcp.emptyHint': 'Add a custom stdio, HTTP, or SSE MCP server to start extending tool access.',
@@ -486,7 +488,8 @@ export const en = {
   'settings.mcp.scope.claudeai': 'Claude.ai',
   'settings.mcp.scope.managed': 'Managed',
   'settings.mcp.transport.http': 'Streamable HTTP',
-  'settings.mcp.globalOnlyHint': 'This page manages only user-global MCP servers for speed. Project-specific MCP will move into the chat slash-command experience.',
+  'settings.mcp.globalOnlyHint': 'Choose Local for one project, Project for `.mcp.json`, or User for all projects.',
+  'settings.mcp.currentProjectHint': 'Selected project: {path}',
   'settings.mcp.form.back': 'Back to servers',
   'settings.mcp.form.createTitle': 'Connect to a custom MCP',
   'settings.mcp.form.createHint': 'Set up a custom MCP server with the fields supported by Claude Code today.',

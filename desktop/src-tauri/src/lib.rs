@@ -286,11 +286,22 @@ fn dir_has_portable_data(dir: &Path) -> bool {
     if !dir.is_dir() {
         return false;
     }
-    [WINDOW_STATE_FILE, TERMINAL_CONFIG_FILE]
+    [
+        "settings.json",
+        ".claude.json",
+        ".mcp.json",
+        WINDOW_STATE_FILE,
+        TERMINAL_CONFIG_FILE,
+    ]
         .iter()
         .any(|f| dir.join(f).is_file())
         || dir.join("Cache").is_dir()
         || dir.join("EBWebView").is_dir()
+        || dir.join("projects").is_dir()
+        || dir.join("skills").is_dir()
+        || dir.join("plugins").is_dir()
+        || dir.join("cowork_plugins").is_dir()
+        || dir.join("cc-haha").is_dir()
 }
 
 /// Resolve the default portable config directory: exe_dir/CLAUDE_CONFIG_DIR.
@@ -1321,9 +1332,13 @@ fn resolve_terminal_cwd(cwd: Option<String>) -> Result<PathBuf, String> {
         }
     }) {
         Some(path) => path,
-        None => home_dir().unwrap_or(
-            std::env::current_dir().map_err(|err| format!("resolve current directory: {err}"))?,
-        ),
+        None => std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(PathBuf::from)
+            .or_else(home_dir)
+            .unwrap_or(
+                std::env::current_dir()
+                    .map_err(|err| format!("resolve current directory: {err}"))?,
+            ),
     };
 
     if path.is_dir() {
@@ -1838,8 +1853,9 @@ fn kill_windows_sidecars() {
 mod tests {
     use super::{
         decode_terminal_output, default_utf8_locale, ensure_utf8_locale,
-        has_meaningful_intersection, is_persistable_window_state, normalize_terminal_bash_path,
-        parse_env_block, resolve_desktop_terminal_shell, run_notification_bridge,
+        dir_has_portable_data, has_meaningful_intersection, is_persistable_window_state,
+        normalize_terminal_bash_path, parse_env_block, resolve_desktop_terminal_shell,
+        resolve_terminal_cwd, run_notification_bridge,
         select_h5_dist_dir, DesktopTerminalConfig, StoredWindowState, TerminalHostPlatform,
         SERVER_BIND_HOST, SERVER_CONTROL_HOST,
     };
@@ -2015,6 +2031,42 @@ mod tests {
         assert_eq!(env.get("LANG").map(String::as_str), Some("zh_CN.UTF-8"));
         assert_eq!(env.get("LC_CTYPE").map(String::as_str), Some("en_US.UTF8"));
         assert_eq!(env.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
+    }
+
+    #[test]
+    fn terminal_cwd_defaults_to_portable_config_dir_when_present() {
+        let original = std::env::var_os("CLAUDE_CONFIG_DIR");
+        let dir = std::env::temp_dir().join(format!(
+            "cchh-terminal-portable-cwd-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create portable config dir");
+        std::env::set_var("CLAUDE_CONFIG_DIR", &dir);
+
+        let cwd = resolve_terminal_cwd(None).expect("portable cwd should resolve");
+
+        assert_eq!(cwd, dir);
+
+        if let Some(value) = original {
+            std::env::set_var("CLAUDE_CONFIG_DIR", value);
+        } else {
+            std::env::remove_var("CLAUDE_CONFIG_DIR");
+        }
+        fs::remove_dir_all(cwd).expect("remove portable config dir");
+    }
+
+    #[test]
+    fn portable_data_detection_includes_cli_state_dirs() {
+        let root = std::env::temp_dir().join(format!(
+            "cchh-portable-data-detect-{}",
+            std::process::id()
+        ));
+        let skills = root.join("skills");
+        fs::create_dir_all(&skills).expect("create skills dir");
+
+        assert!(dir_has_portable_data(&root));
+
+        fs::remove_dir_all(root).expect("remove portable data fixture");
     }
 
     #[test]

@@ -126,6 +126,7 @@ export const zh: Record<TranslationKey, string> = {
   'workspace.addToChat': '添加到聊天',
   'workspace.addSelectionToChat': '添加到对话',
   'workspace.copyPath': '复制路径',
+  'workspace.copyAbsolutePath': '复制绝对路径',
   'workspace.pathCopied': '路径已复制。',
   'workspace.localComment': '本地评论',
   'workspace.commentLine': '评论第 {line} 行',
@@ -180,6 +181,7 @@ export const zh: Record<TranslationKey, string> = {
   // Settings > Terminal
   'settings.terminal.title': '终端',
   'settings.terminal.description': '直接运行宿主机命令，用于安装插件、Skills、MCP 等扩展。桌面端已内置 claude-haha；文档里的 claude <参数> 可替换成 claude-haha <参数>，例如 claude-haha plugin install ... 或 claude-haha mcp add ...',
+  'settings.terminal.infoLabel': '终端安装说明',
   'settings.terminal.clear': '清屏',
   'settings.terminal.restart': '重启',
   'settings.terminal.windowTitle': '宿主机 Shell',
@@ -469,7 +471,7 @@ export const zh: Record<TranslationKey, string> = {
 
   // Settings > MCP
   'settings.mcp.title': 'MCP 服务',
-  'settings.mcp.description': '在桌面端直接管理外部工具与数据源。你可以添加、编辑、重连或禁用 MCP 服务。',
+  'settings.mcp.description': '在桌面端直接管理外部工具与数据源。Local、Project、User 三种范围与 CLI 保持一致。',
   'settings.mcp.addServer': '添加服务',
   'settings.mcp.empty': '还没有配置 MCP 服务',
   'settings.mcp.emptyHint': '先添加一个自定义的 STDIO、HTTP 或 SSE MCP 服务。',
@@ -488,7 +490,8 @@ export const zh: Record<TranslationKey, string> = {
   'settings.mcp.scope.claudeai': 'Claude.ai',
   'settings.mcp.scope.managed': '受管控',
   'settings.mcp.transport.http': 'Streamable HTTP',
-  'settings.mcp.globalOnlyHint': '这个页面只管理全局用户 MCP，以保证速度和清晰度。项目级 MCP 将放到聊天页的斜杠命令体验里。',
+  'settings.mcp.globalOnlyHint': '选择项目私有、项目共享或全局用户范围。',
+  'settings.mcp.currentProjectHint': '当前项目：{path}',
   'settings.mcp.form.back': '返回服务列表',
   'settings.mcp.form.createTitle': '连接自定义 MCP',
   'settings.mcp.form.createHint': '按当前 Claude Code 支持的字段添加一个自定义 MCP 服务。',

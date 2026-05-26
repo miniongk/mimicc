@@ -10,8 +10,6 @@ export type SessionListItem = {
   projectRoot?: string | null
   workDir: string | null
   workDirExists: boolean
-  sourceSessionId?: string
-  sourceMessageId?: string
 }
 
 export type MessageEntry = {

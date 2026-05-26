@@ -695,6 +695,117 @@ describe('chatStore history mapping', () => {
     })
   })
 
+  it('does not duplicate a hydrated assistant reply when live output replays after reconnect', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: 'live prompt',
+              transcriptMessageId: 'transcript-user-1',
+              timestamp: 1,
+            },
+            {
+              id: 'live-assistant',
+              type: 'assistant_text',
+              content: 'live answer',
+              transcriptMessageId: 'transcript-assistant-1',
+              timestamp: 2,
+            },
+          ],
+          streamingText: 'live answer',
+          chatState: 'streaming',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 2 },
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+      {
+        id: 'live-user',
+        type: 'user_text',
+        transcriptMessageId: 'transcript-user-1',
+      },
+      {
+        id: 'live-assistant',
+        type: 'assistant_text',
+        content: 'live answer',
+        transcriptMessageId: 'transcript-assistant-1',
+      },
+    ])
+    expect(notifyDesktopMock).not.toHaveBeenCalled()
+  })
+
+  it('collapses duplicate assistant replies after transcript id hydration', async () => {
+    vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
+      messages: [
+        {
+          id: 'transcript-user-1',
+          type: 'user',
+          timestamp: '2026-04-06T00:00:00.000Z',
+          content: 'live prompt',
+        },
+        {
+          id: 'transcript-assistant-1',
+          type: 'assistant',
+          timestamp: '2026-04-06T00:00:01.000Z',
+          content: 'live answer',
+        },
+      ],
+    })
+
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: 'live prompt',
+              transcriptMessageId: 'transcript-user-1',
+              timestamp: 1,
+            },
+            {
+              id: 'live-assistant',
+              type: 'assistant_text',
+              content: 'live answer',
+              transcriptMessageId: 'transcript-assistant-1',
+              timestamp: 2,
+            },
+            {
+              id: 'replayed-assistant',
+              type: 'assistant_text',
+              content: 'live answer',
+              timestamp: 3,
+            },
+          ],
+        }),
+      },
+    })
+
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+      {
+        id: 'live-user',
+        type: 'user_text',
+        transcriptMessageId: 'transcript-user-1',
+      },
+      {
+        id: 'live-assistant',
+        type: 'assistant_text',
+        content: 'live answer',
+        transcriptMessageId: 'transcript-assistant-1',
+      },
+    ])
+  })
+
   it('retries transcript id hydration after the assistant message is persisted', async () => {
     vi.useFakeTimers()
     vi.mocked(sessionsApi.getMessages)

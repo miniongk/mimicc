@@ -795,6 +795,9 @@ const VIRTUAL_OVERSCAN_PX = 1200
 const VIRTUAL_DEFAULT_VIEWPORT_HEIGHT = 720
 const VIRTUAL_MIN_ITEM_HEIGHT = 48
 const VIRTUAL_MAX_ITEM_HEIGHT = 24_000
+// Windows WebView2 can report 1px oscillations for live chat content; don't
+// convert those into bottom-scroll corrections.
+const CONTENT_RESIZE_FOLLOW_MIN_DELTA_PX = 2
 const EMPTY_MESSAGES: UIMessage[] = []
 const CHAT_SCROLL_AREA_CLASS = [
   'chat-scroll-area',
@@ -1241,6 +1244,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const pendingMeasuredHeightsRef = useRef(false)
   const measureFlushFrameRef = useRef<number | null>(null)
   const lastAutoScrollAtRef = useRef(0)
+  const lastContentResizeFollowHeightRef = useRef<number | null>(null)
   const shouldAutoScrollRef = useRef(true)
   const isProgrammaticScrollingRef = useRef(false)
   const ignoreProgrammaticScrollUntilRef = useRef(0)
@@ -1261,7 +1265,13 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     viewportHeight: VIRTUAL_DEFAULT_VIEWPORT_HEIGHT,
   })
   const [measuredItemsVersion, setMeasuredItemsVersion] = useState(0)
-  const branchActionsDisabled = isMemberSession
+  const branchActionsDisabled =
+    isMemberSession ||
+    chatState !== 'idle' ||
+    streamingText.trim().length > 0 ||
+    Boolean(activeThinkingId) ||
+    Boolean(sessionState?.activeToolUseId) ||
+    Boolean(sessionState?.activeToolName)
   const hasCompactingDivider = messages.some((message) =>
     message.type === 'compact_summary' && message.phase === 'compacting')
 
@@ -1397,6 +1407,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
         ? getMetricsForSession(resolvedSessionId)
         : new Map<string, VirtualRenderItemMetric>()
       pendingMeasuredHeightsRef.current = false
+      lastContentResizeFollowHeightRef.current = null
       if (measureFlushFrameRef.current !== null) {
         cancelAnimationFrame(measureFlushFrameRef.current)
         measureFlushFrameRef.current = null
@@ -1474,7 +1485,18 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     const content = scrollContentRef.current
     if (!content || typeof ResizeObserver === 'undefined') return
 
-    const observer = new ResizeObserver(() => {
+    const observer = new ResizeObserver((entries) => {
+      const nextHeight = entries[0]?.contentRect.height
+      if (typeof nextHeight === 'number' && Number.isFinite(nextHeight)) {
+        const previousFollowHeight = lastContentResizeFollowHeightRef.current
+        if (
+          previousFollowHeight !== null &&
+          Math.abs(nextHeight - previousFollowHeight) < CONTENT_RESIZE_FOLLOW_MIN_DELTA_PX
+        ) {
+          return
+        }
+        lastContentResizeFollowHeightRef.current = nextHeight
+      }
       if (!shouldFollowContentResize) return
       if (!shouldAutoScrollRef.current) return
       scrollToBottom('auto')

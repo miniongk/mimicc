@@ -26,6 +26,7 @@ import {
   type PreparedSessionWorkspace,
 } from './repositoryLaunchService.js'
 import { registerFilesystemAccessRoot } from './filesystemAccessRoots.js'
+import { normalizeDriveRootPathForPlatform } from './windowsDrivePath.js'
 import { cleanSessionTitleSource } from '../../utils/sessionTitleText.js'
 
 // ============================================================================
@@ -42,8 +43,6 @@ export type SessionListItem = {
   projectRoot: string | null
   workDir: string | null
   workDirExists: boolean
-  sourceSessionId?: string
-  sourceMessageId?: string
 }
 
 export type DeleteSessionFailure = {
@@ -294,14 +293,14 @@ export class SessionService {
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i]
       if (entry.type === 'session-meta' && typeof (entry as Record<string, unknown>).workDir === 'string') {
-        return (entry as Record<string, unknown>).workDir as string
+        return normalizeDriveRootPathForPlatform((entry as Record<string, unknown>).workDir as string)
       }
     }
 
     for (let i = entries.length - 1; i >= 0; i--) {
       const cwd = entries[i]?.cwd
       if (typeof cwd === 'string' && cwd.trim()) {
-        return cwd
+        return normalizeDriveRootPathForPlatform(cwd)
       }
     }
 
@@ -367,7 +366,7 @@ export class SessionService {
 
   private async canonicalizeProjectPath(projectPath: string): Promise<string> {
     try {
-      return (await fs.realpath(projectPath)).normalize('NFC')
+      return normalizeDriveRootPathForPlatform(await fs.realpath(projectPath)).normalize('NFC')
     } catch {
       return projectPath.normalize('NFC')
     }
@@ -915,7 +914,7 @@ export class SessionService {
 
     // Optionally filter to a specific project
     if (projectFilter) {
-      const sanitized = this.sanitizePath(projectFilter)
+      const sanitized = this.sanitizePath(normalizeDriveRootPathForPlatform(projectFilter))
       projectDirs = projectDirs.filter((d) => d === sanitized)
     }
 
@@ -964,6 +963,11 @@ export class SessionService {
     const windowsDrivePath = sanitized.match(/^([a-zA-Z])--(.+)$/)
     if (windowsDrivePath) {
       return `${windowsDrivePath[1]}:${path.win32.sep}${windowsDrivePath[2].replace(/-/g, path.win32.sep)}`
+    }
+
+    const windowsDriveRoot = sanitized.match(/^([a-zA-Z])--$/)
+    if (windowsDriveRoot) {
+      return `${windowsDriveRoot[1]}:${path.win32.sep}`
     }
 
     // On POSIX the original path starts with '/', so the sanitized form starts with '-'.
@@ -1323,20 +1327,6 @@ export class SessionService {
           }
         }
 
-        // Extract fork parent relationship from transcript entries
-        let sourceSessionId: string | undefined
-        let sourceMessageId: string | undefined
-        for (const e of entries) {
-          const fork = (e as Record<string, unknown>).forkedFrom as
-            | { sessionId?: string; messageUuid?: string }
-            | undefined
-          if (fork?.sessionId) {
-            sourceSessionId = fork.sessionId
-            sourceMessageId = fork.messageUuid
-            break
-          }
-        }
-
         return {
           id: sessionId,
           title,
@@ -1347,8 +1337,6 @@ export class SessionService {
           projectRoot,
           workDir,
           workDirExists,
-          sourceSessionId,
-          sourceMessageId,
         }
       } catch {
         // Skip unreadable files
@@ -1644,7 +1632,7 @@ export class SessionService {
   async clearSessionTranscript(sessionId: string, fallbackWorkDir?: string): Promise<void> {
     let found = await this.findSessionFile(sessionId)
     if (!found && fallbackWorkDir) {
-      const resolvedPath = path.resolve(fallbackWorkDir)
+      const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(fallbackWorkDir))
       const absWorkDir = await fs.realpath(resolvedPath).catch(() => resolvedPath)
       const dirPath = path.join(this.getProjectsDir(), this.sanitizePath(absWorkDir))
       await fs.mkdir(dirPath, { recursive: true })
@@ -1710,14 +1698,15 @@ export class SessionService {
       }
     }
 
-    const targetProjectDir = this.sanitizePath(metadata.workDir)
+    const normalizedWorkDir = normalizeDriveRootPathForPlatform(metadata.workDir)
+    const targetProjectDir = this.sanitizePath(normalizedWorkDir)
     const targetFilePath = path.join(this.getProjectsDir(), targetProjectDir, `${sessionId}.jsonl`)
     await fs.mkdir(path.dirname(targetFilePath), { recursive: true })
 
     await this.appendJsonlEntry(targetFilePath, {
       type: 'session-meta',
       isMeta: true,
-      workDir: metadata.workDir,
+      workDir: normalizedWorkDir,
       repository,
       timestamp: new Date().toISOString(),
     })
@@ -1746,7 +1735,7 @@ export class SessionService {
       throw err
     }
 
-    const keepProjectDir = this.sanitizePath(keepWorkDir)
+    const keepProjectDir = this.sanitizePath(normalizeDriveRootPathForPlatform(keepWorkDir))
     let removed = 0
     for (const projectDir of projectDirs) {
       if (!projectDir.isDirectory()) continue

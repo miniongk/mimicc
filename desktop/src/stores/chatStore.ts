@@ -41,6 +41,18 @@ export type ComposerDraftState = {
   attachments: ComposerAttachment[]
 }
 
+export type ComposerReferenceInsertion = {
+  text: string
+  reference?: {
+    kind: 'file'
+    path: string
+    absolutePath?: string
+    name: string
+    isDirectory?: boolean
+  }
+  nonce: number
+}
+
 export type PerSessionState = {
   messages: UIMessage[]
   chatState: ChatState
@@ -75,6 +87,7 @@ export type PerSessionState = {
     attachments?: UIAttachment[]
     nonce: number
   } | null
+  composerInsertion?: ComposerReferenceInsertion | null
   composerDraft?: ComposerDraftState | null
 }
 
@@ -99,6 +112,7 @@ const DEFAULT_SESSION_STATE: PerSessionState = {
   activeGoal: null,
   elapsedTimer: null,
   composerPrefill: null,
+  composerInsertion: null,
   composerDraft: null,
 }
 
@@ -141,6 +155,11 @@ type ChatStore = {
     sessionId: string,
     prefill: { text: string; attachments?: UIAttachment[] },
   ) => void
+  queueComposerInsertion: (
+    sessionId: string,
+    insertion: Omit<ComposerReferenceInsertion, 'nonce'>,
+  ) => void
+  clearComposerInsertion: (sessionId: string, nonce?: number) => void
   setComposerDraft: (sessionId: string, draft: ComposerDraftState) => void
   clearComposerDraft: (sessionId: string) => void
   clearMessages: (sessionId: string) => void
@@ -352,9 +371,21 @@ function appendAssistantTextMessage(
   model?: string,
   transcriptMessageId?: string,
 ): UIMessage[] {
-  if (!content.trim()) return messages
+  const trimmedContent = content.trim()
+  if (!trimmedContent) return messages
 
   const last = messages[messages.length - 1]
+  // Wake/reconnect replay can resend persisted assistant text without a
+  // transcript id. Ignore chunks that are already present in the hydrated tail.
+  if (
+    last?.type === 'assistant_text' &&
+    last.transcriptMessageId &&
+    !transcriptMessageId &&
+    last.content.trim().includes(trimmedContent)
+  ) {
+    return messages
+  }
+
   const canMergeIntoLast =
     last?.type === 'assistant_text' &&
     (
@@ -581,12 +612,38 @@ function mergeRestoredTranscriptMessageIds(
   return changed ? merged : messages
 }
 
+function dropDuplicateTranscriptTextMessages(messages: UIMessage[]): UIMessage[] {
+  const seen = new Set<string>()
+  const deduped: UIMessage[] = []
+  let changed = false
+
+  for (const message of messages) {
+    if (
+      (message.type === 'user_text' || message.type === 'assistant_text') &&
+      message.transcriptMessageId
+    ) {
+      const key = `${message.type}:${message.transcriptMessageId}:${message.content.trim()}`
+      if (seen.has(key)) {
+        changed = true
+        continue
+      }
+      seen.add(key)
+    }
+
+    deduped.push(message)
+  }
+
+  return changed ? deduped : messages
+}
+
 function mergeRestoredHistoryIntoLiveMessages(
   messages: UIMessage[],
   restoredMessages: UIMessage[],
 ): UIMessage[] {
   return mergeRestoredTerminalGoalEvents(
-    mergeRestoredTranscriptMessageIds(messages, restoredMessages),
+    dropDuplicateTranscriptTextMessages(
+      mergeRestoredTranscriptMessageIds(messages, restoredMessages),
+    ),
     restoredMessages,
   )
 }
@@ -1095,6 +1152,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }))
   },
 
+  queueComposerInsertion: (sessionId, insertion) => {
+    set((state) => ({
+      sessions: updateSessionIn(state.sessions, sessionId, () => ({
+        composerInsertion: {
+          ...insertion,
+          nonce: Date.now(),
+        },
+      })),
+    }))
+  },
+
+  clearComposerInsertion: (sessionId, nonce) => {
+    set((state) => ({
+      sessions: updateSessionIn(state.sessions, sessionId, (session) => {
+        if (nonce !== undefined && session.composerInsertion?.nonce !== nonce) return {}
+        return { composerInsertion: null }
+      }),
+    }))
+  },
+
   setComposerDraft: (sessionId, draft) => {
     set((state) => {
       const session = state.sessions[sessionId] ?? createDefaultSessionState()
@@ -1493,7 +1570,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           apiRetry: null,
         }))
         useTabStore.getState().updateTabStatus(sessionId, 'idle')
-        const notification = wasAgentRunning
+        const appendedCompletionMessage = completionMessages !== session.messages
+        const notification = wasAgentRunning && appendedCompletionMessage
           ? buildAgentCompletionNotification(sessionId, completionMessages, text)
           : null
         if (notification) {
