@@ -167,6 +167,7 @@ async function handleOpenaiChat(
   const transformed = anthropicToOpenaiChat(body, {
     roundTripReasoningContent: deepSeekCompatible,
     passThinkingToggle: deepSeekCompatible,
+    imageContentMode: shouldUseTextOnlyOpenAIChatContent(baseUrl) ? 'text_only' : 'vision',
   })
   const url = `${baseUrl}/v1/chat/completions`
   const proxyOptions = getProxyFetchOptions({ proxyUrl })
@@ -224,6 +225,10 @@ function shouldUseDeepSeekReasoningCompat(baseUrl: string): boolean {
     /(^|[./-])deepseek([./-]|$)/i.test(baseUrl) ||
     /(^|[./-])opencode\.ai([:/]|$)/i.test(baseUrl)
   )
+}
+
+function shouldUseTextOnlyOpenAIChatContent(baseUrl: string): boolean {
+  return shouldUseDeepSeekReasoningCompat(baseUrl)
 }
 
 async function handleOpenaiResponses(

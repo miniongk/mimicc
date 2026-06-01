@@ -15,6 +15,10 @@ import { handleProxyRequest } from './proxy/handler.js'
 import { ProviderService } from './services/providerService.js'
 import { handleHahaOAuthCallback } from './api/haha-oauth.js'
 import { handleHahaOpenAIOAuthCallback } from './api/haha-openai-oauth.js'
+import { handlePreviewFs } from './api/previewFs.js'
+import { handleLocalFile } from './api/localFile.js'
+import { sessionService } from './services/sessionService.js'
+import { conversationService } from './services/conversationService.js'
 import { OPENAI_CODEX_REDIRECT_PATH } from '../services/openaiAuth/client.js'
 import { ensureDesktopCliLauncherInstalled } from './services/desktopCliLauncherService.js'
 import { enableConfigs } from '../utils/config.js'
@@ -275,6 +279,59 @@ export function startServer(port = PORT, host = HOST) {
           return handleHahaOpenAIOAuthCallback(url)
         }
 
+        // Preview filesystem — serve sandboxed workspace files for a session.
+        if (url.pathname.startsWith('/preview-fs/')) {
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+
+          if (authRequired) {
+            const authError = await requireH5Token(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          } else if (forceAuth) {
+            const authError = await requireAuth(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          }
+
+          const response = await handlePreviewFs(
+            url,
+            async (sessionId) =>
+              conversationService.getSessionWorkDir(sessionId) ||
+              (await sessionService.getSessionWorkDir(sessionId)) ||
+              null,
+            req.headers,
+          )
+          return withCors(response, cors)
+        }
+
+        // Local filesystem — serve an ABSOLUTE local file ($HOME/tmp/registered
+        // roots sandbox) so `file://` links / AI-emitted absolute paths open in
+        // the in-app browser. Gated identically to /preview-fs above.
+        if (url.pathname.startsWith('/local-file/')) {
+          if (cors.rejected) {
+            return corsRejectedResponse(cors)
+          }
+
+          if (authRequired) {
+            const authError = await requireH5Token(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          } else if (forceAuth) {
+            const authError = await requireAuth(req)
+            if (authError) {
+              return withCors(authError, cors)
+            }
+          }
+
+          const response = await handleLocalFile(url, req.headers)
+          return withCors(response, cors)
+        }
+
         // REST API
         if (url.pathname.startsWith('/api/')) {
           if (cors.rejected) {
@@ -396,28 +453,47 @@ export function startServer(port = PORT, host = HOST) {
 }
 
 // ─── Graceful shutdown: kill all CLI subprocesses on exit ────────────────────
-import { conversationService } from './services/conversationService.js'
+
+let shutdownInProgress: Promise<void> | null = null
 
 function cleanupAllSessions() {
   const active = conversationService.getActiveSessions()
   if (active.length > 0) {
     console.log(`[Server] Shutting down — killing ${active.length} CLI subprocess(es)`)
-    for (const sessionId of active) {
-        conversationService.stopSession(sessionId)
-    }
+    conversationService.stopAllSessions()
   }
 }
 
+async function cleanupAllSessionsAndWait() {
+  const active = conversationService.getActiveSessions()
+  if (active.length > 0) {
+    console.log(`[Server] Shutting down — killing ${active.length} CLI subprocess(es)`)
+    await conversationService.stopAllSessionsAndWait()
+  }
+}
+
+function shutdownAndExit(signal: 'SIGTERM' | 'SIGINT', exitCode: number) {
+  if (shutdownInProgress) return
+
+  shutdownInProgress = (async () => {
+    console.log(`[Server] Received ${signal}`)
+    await cleanupAllSessionsAndWait()
+    process.exit(exitCode)
+  })().catch((error) => {
+    console.error(
+      `[Server] ${signal} shutdown cleanup failed:`,
+      error instanceof Error ? error.message : error,
+    )
+    process.exit(1)
+  })
+}
+
 process.on('SIGTERM', () => {
-  console.log('[Server] Received SIGTERM')
-  cleanupAllSessions()
-  process.exit(0)
+  shutdownAndExit('SIGTERM', 0)
 })
 
 process.on('SIGINT', () => {
-  console.log('[Server] Received SIGINT')
-  cleanupAllSessions()
-  process.exit(0)
+  shutdownAndExit('SIGINT', 0)
 })
 
 process.on('exit', () => {

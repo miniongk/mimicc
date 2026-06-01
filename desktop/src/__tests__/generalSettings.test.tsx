@@ -8,7 +8,7 @@ import { useUIStore } from '../stores/uiStore'
 import { useUpdateStore } from '../stores/updateStore'
 import type { SavedProvider } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
-import type { AppMode, ThemeMode, UpdateProxySettings } from '../types/settings'
+import type { AppMode, ChatSendBehavior, ThemeMode, UpdateProxySettings } from '../types/settings'
 
 const MOCK_DELETE_PROVIDER = vi.fn()
 const MOCK_GET_SETTINGS = vi.fn()
@@ -166,6 +166,7 @@ describe('Settings > General tab', () => {
       thinkingEnabled: true,
       skipWebFetchPreflight: true,
       desktopNotificationsEnabled: true,
+      chatSendBehavior: 'enter',
       responseLanguage: '',
       uiZoom: 1,
       webSearch: { mode: 'auto', tavilyApiKey: '', braveApiKey: '' },
@@ -192,6 +193,9 @@ describe('Settings > General tab', () => {
       }),
       setDesktopNotificationsEnabled: vi.fn().mockImplementation(async (enabled: boolean) => {
         useSettingsStore.setState({ desktopNotificationsEnabled: enabled })
+      }),
+      setChatSendBehavior: vi.fn().mockImplementation(async (chatSendBehavior: ChatSendBehavior) => {
+        useSettingsStore.setState({ chatSendBehavior })
       }),
       setResponseLanguage: vi.fn().mockImplementation(async (language: string) => {
         useSettingsStore.setState({ responseLanguage: language })
@@ -326,6 +330,18 @@ describe('Settings > General tab', () => {
     expect((notificationsHeading.compareDocumentPosition(uiZoomHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
     expect((uiZoomHeading.compareDocumentPosition(networkHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
     expect((networkHeading.compareDocumentPosition(webFetchHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+  })
+
+  it('lets users choose Ctrl or Command Enter as the chat send shortcut', async () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: /Ctrl\/Cmd\+Enter sends/i }))
+
+    await waitFor(() => {
+      expect(useSettingsStore.getState().setChatSendBehavior).toHaveBeenCalledWith('modifierEnter')
+    })
+    expect(screen.getByRole('button', { name: /Ctrl\/Cmd\+Enter sends/i })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('saves provider network timeout and manual proxy from General settings', async () => {

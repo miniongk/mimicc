@@ -24,7 +24,7 @@ import { FileSearchMenu, type FileSearchMenuHandle } from './FileSearchMenu'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from './LocalSlashCommandPanel'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import {
-  FALLBACK_SLASH_COMMANDS,
+  getLocalizedFallbackCommands,
   filterSlashCommands,
   findSlashTrigger,
   mergeSlashCommands,
@@ -39,6 +39,7 @@ import {
   type ComposerAttachment,
 } from '../../lib/composerAttachments'
 import { useComposerFileDrop } from './useComposerFileDrop'
+import { shouldSubmitOnEnter } from './sendShortcut'
 
 type GitInfo = SessionGitInfo
 
@@ -131,8 +132,9 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     activeTabId ? state.selections[activeTabId] : undefined,
   )
   const currentModel = useSettingsStore((state) => state.currentModel)
+  const chatSendBehavior = useSettingsStore((state) => state.chatSendBehavior)
   const runtimeSelectionKey = runtimeSelection
-    ? `${runtimeSelection.providerId ?? 'official'}:${runtimeSelection.modelId}`
+    ? `${runtimeSelection.providerId ?? 'official'}:${runtimeSelection.modelId}:${runtimeSelection.effortLevel ?? 'auto'}`
     : undefined
   const runtimeModelLabel = runtimeSelection?.modelId ?? currentModel?.name ?? currentModel?.id
   const activeSession = useSessionStore((state) => activeTabId ? state.sessions.find((session) => session.id === activeTabId) ?? null : null)
@@ -400,8 +402,8 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   }, [fileSearchOpen])
 
   const allSlashCommands = useMemo(
-    () => mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS),
-    [slashCommands],
+    () => mergeSlashCommands(slashCommands, getLocalizedFallbackCommands(t)),
+    [slashCommands, t],
   )
 
   const filteredCommands = useMemo(() => {
@@ -694,7 +696,11 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
         return
       }
       if (event.key === 'Enter') {
-        if (exactSlashCommand && slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase()) {
+        if (
+          exactSlashCommand &&
+          slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase() &&
+          shouldSubmitOnEnter(event, chatSendBehavior)
+        ) {
           event.preventDefault()
           handleSubmit()
           return
@@ -717,7 +723,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       }
     }
 
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (shouldSubmitOnEnter(event, chatSendBehavior)) {
       event.preventDefault()
       handleSubmit()
     }

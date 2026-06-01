@@ -64,6 +64,8 @@ vi.mock('../../i18n', () => ({
       'tabs.openTerminal': 'Open Terminal',
       'tabs.showWorkspace': 'Show Workspace',
       'tabs.hideWorkspace': 'Hide Workspace',
+      'tabs.showBrowser': 'Show Browser',
+      'tabs.hideBrowser': 'Hide Browser',
       'openProject.openProject': 'Open project',
       'openProject.openIn': 'Open in {target}',
       'openProject.openFailed': 'Could not open project',
@@ -137,6 +139,7 @@ describe('TabBar', () => {
     const { useSessionStore } = await import('../../stores/sessionStore')
     const { useWorkspacePanelStore } = await import('../../stores/workspacePanelStore')
     const { useTerminalPanelStore } = await import('../../stores/terminalPanelStore')
+    const { useBrowserPanelStore } = await import('../../stores/browserPanelStore')
 
     useTabStore.setState({ tabs: [], activeTabId: null })
     useChatStore.setState({
@@ -152,6 +155,7 @@ describe('TabBar', () => {
     } as Partial<ReturnType<typeof useSessionStore.getState>>)
     useWorkspacePanelStore.setState(useWorkspacePanelStore.getInitialState(), true)
     useTerminalPanelStore.setState(useTerminalPanelStore.getInitialState(), true)
+    useBrowserPanelStore.setState(useBrowserPanelStore.getInitialState(), true)
 
     delete (window as typeof window & { __TAURI__?: unknown }).__TAURI__
   })
@@ -780,6 +784,59 @@ describe('TabBar', () => {
     expect(useWorkspacePanelStore.getState().isPanelOpen('tab-1')).toBe(false)
   })
 
+  it('does not render a browser toolbar button for session tabs', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-1', title: 'First Session', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-1',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    expect(screen.queryByRole('button', { name: 'Show Browser' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Hide Browser' })).not.toBeInTheDocument()
+  })
+
+  it('hides the browser toolbar button for non-session tabs', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: '__terminal__1', title: 'Terminal 1', type: 'terminal', status: 'idle' },
+        { sessionId: '__settings__', title: 'Settings', type: 'settings', status: 'idle' },
+      ],
+      activeTabId: '__terminal__1',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    const { rerender } = render(<TabBar />)
+
+    expect(screen.queryByRole('button', { name: 'Show Browser' })).not.toBeInTheDocument()
+
+    await act(async () => {
+      useTabStore.getState().setActiveTab('__settings__')
+    })
+    rerender(<TabBar />)
+
+    expect(screen.queryByRole('button', { name: 'Show Browser' })).not.toBeInTheDocument()
+  })
+
   it('hides the workspace toolbar button for non-session tabs', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
@@ -873,6 +930,7 @@ describe('TabBar', () => {
     fireEvent.click(screen.getByText('Close All'))
 
     expect(screen.getByText('Sessions Running')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Sessions Running' })).toBeInTheDocument()
     expect(screen.getByText('2 sessions still running')).toBeInTheDocument()
     expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-running', 'tab-thinking', 'tab-idle'])
     expect(disconnectSession).not.toHaveBeenCalled()

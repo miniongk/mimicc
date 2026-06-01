@@ -920,6 +920,36 @@ describe('ChatInput file mentions', () => {
     expect(input).not.toHaveClass('pb-14')
   })
 
+  it('uses Ctrl or Command Enter to send when that composer preference is selected', async () => {
+    useSettingsStore.setState({
+      chatSendBehavior: 'modifierEnter',
+    })
+
+    render(<ChatInput />)
+
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: {
+        value: 'avoid accidental sends',
+        selectionStart: 'avoid accidental sends'.length,
+      },
+    })
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(mocks.wsSend).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, {
+      type: 'user_message',
+      content: 'avoid accidental sends',
+      attachments: [],
+    })
+  })
+
   it('prioritizes active-session slash commands by command name when filtering', async () => {
     useChatStore.setState({
       sessions: {

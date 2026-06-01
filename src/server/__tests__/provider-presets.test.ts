@@ -195,4 +195,13 @@ describe('provider presets API', () => {
     const updatedRaw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')
     expect(JSON.parse(updatedRaw)).toEqual(updateBody)
   })
+
+  test('provider presets carry docs-backed context windows for current coding models', () => {
+    const byId = new Map(PROVIDER_PRESETS.map((preset) => [preset.id, preset]))
+
+    for (const id of ['deepseek', 'zhipuglm', 'kimi', 'minimax']) {
+      const preset = byId.get(id)!
+      expect(preset.modelContextWindows?.[preset.defaultModels.main]).toBeGreaterThan(0)
+    }
+  })
 })

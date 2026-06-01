@@ -799,6 +799,7 @@ const VIRTUAL_MAX_ITEM_HEIGHT = 24_000
 // convert those into bottom-scroll corrections.
 const CONTENT_RESIZE_FOLLOW_MIN_DELTA_PX = 2
 const EMPTY_MESSAGES: UIMessage[] = []
+const EMPTY_AGENT_TASK_NOTIFICATIONS: Record<string, AgentTaskNotification> = {}
 const CHAT_SCROLL_AREA_CLASS = [
   'chat-scroll-area',
   '[scrollbar-width:auto]',
@@ -1222,7 +1223,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const chatState = sessionState?.chatState ?? 'idle'
   const streamingText = sessionState?.streamingText ?? ''
   const activeThinkingId = sessionState?.activeThinkingId ?? null
-  const agentTaskNotifications = sessionState?.agentTaskNotifications ?? {}
+  const agentTaskNotifications = sessionState?.agentTaskNotifications ?? EMPTY_AGENT_TASK_NOTIFICATIONS
   const activeAskUserQuestionToolUseId =
     sessionState?.pendingPermission?.toolName === 'AskUserQuestion'
       ? sessionState.pendingPermission.toolUseId
@@ -1798,7 +1799,6 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
           <CurrentTurnChangeCard
             key={`turn-change-${card.target.messageId}`}
             sessionId={resolvedSessionId}
-            targetUserMessageId={card.checkpoint.target.targetUserMessageId}
             checkpoint={card.checkpoint}
             workDir={card.workDir}
             error={turnActionErrors[card.target.messageId] ?? null}
@@ -1841,7 +1841,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
                 {content}
               </MeasuredRenderItem>
             ) : (
-              <div key={itemKey} className={CHAT_RENDER_ITEM_CLASS}>
+              <div key={itemKey} className={`${CHAT_RENDER_ITEM_CLASS} chat-render-item--cv`}>
                 {content}
               </div>
             )
@@ -1949,6 +1949,7 @@ export const MessageBlock = memo(function MessageBlock({
             content={message.content}
             attachments={message.attachments}
             branchAction={branchAction}
+            timestamp={message.timestamp}
           />
         </SelectableChatMessage>
       )
@@ -1960,7 +1961,12 @@ export const MessageBlock = memo(function MessageBlock({
           role="assistant"
           content={message.content}
         >
-          <AssistantMessage content={message.content} branchAction={branchAction} />
+          <AssistantMessage
+            content={message.content}
+            branchAction={branchAction}
+            sessionId={sessionId ?? undefined}
+            timestamp={message.timestamp}
+          />
         </SelectableChatMessage>
       )
     case 'thinking':
@@ -2009,16 +2015,26 @@ export const MessageBlock = memo(function MessageBlock({
         />
       )
     case 'error': {
+      const businessErrorKey = message.businessErrorCode
+        ? `businessError.${message.businessErrorCode}` as TranslationKey
+        : null
+      const businessErrorText = businessErrorKey ? t(businessErrorKey) : null
       const errorKey = message.code ? `error.${message.code}` as TranslationKey : null
       const errorText = errorKey ? t(errorKey) : null
-      const displayMessage = (errorText && errorText !== errorKey) ? errorText : message.message
+      const displayMessage =
+        businessErrorText && businessErrorText !== businessErrorKey
+          ? businessErrorText
+          : (errorText && errorText !== errorKey)
+            ? errorText
+            : message.message
       const showRawDetail =
+        !message.businessErrorCode &&
         Boolean(message.message) &&
         message.message.trim() !== '' &&
         message.message !== displayMessage
       return (
         <div className="mb-3 px-4 py-2.5 rounded-lg border border-[var(--color-error)]/20 bg-[var(--color-error-container)]/28 text-sm text-[var(--color-error)]">
-          <strong>Error:</strong> {displayMessage}
+          <strong>{t('common.error')}:</strong> {displayMessage}
           {showRawDetail && (
             <div className="mt-1 whitespace-pre-wrap text-xs text-[var(--color-on-error-container)]/85">
               {message.message}

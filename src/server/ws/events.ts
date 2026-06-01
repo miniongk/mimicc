@@ -24,7 +24,7 @@ export type ClientMessage =
       response: ComputerUsePermissionResponse
     }
   | { type: 'set_permission_mode'; mode: string }
-  | { type: 'set_runtime_config'; providerId: string | null; modelId: string }
+  | { type: 'set_runtime_config'; providerId: string | null; modelId: string; effortLevel?: string }
   | { type: 'stop_generation' }
   | { type: 'ping' }
 
@@ -72,7 +72,7 @@ export type ServerMessage =
       errorType?: string
       errorMessage?: string
     }
-  | { type: 'error'; message: string; code: string; retryable?: boolean }
+  | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }
   | { type: 'team_update'; teamName: string; members: TeamMemberStatus[] }

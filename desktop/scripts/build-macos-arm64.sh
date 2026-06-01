@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 set -euo pipefail
 
@@ -115,8 +115,8 @@ echo "[build-macos-arm64] Rebuilding sidecar for ${TARGET_TRIPLE}..."
 (cd "${DESKTOP_DIR}" && TAURI_ENV_TARGET_TRIPLE="${TARGET_TRIPLE}" bun run build:sidecars)
 
 TAURI_ARGS=(
-  bunx
-  tauri
+  node
+  ./node_modules/@tauri-apps/cli/tauri.js
   build
   --target
   "${TARGET_TRIPLE}"

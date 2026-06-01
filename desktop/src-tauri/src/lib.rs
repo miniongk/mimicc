@@ -217,6 +217,8 @@ mod macos_notifications {
     }
 }
 
+mod webview_panel;
+
 const SERVER_STARTUP_LOG_LIMIT: usize = 80;
 const SERVER_BIND_HOST: &str = "0.0.0.0";
 const SERVER_CONTROL_HOST: &str = "127.0.0.1";
@@ -229,6 +231,9 @@ const APP_MODE_FILE: &str = "app-mode.json";
 const MIN_WINDOW_WIDTH: u32 = 960;
 const MIN_WINDOW_HEIGHT: u32 = 640;
 const MIN_VISIBLE_PIXELS: i64 = 64;
+// Keep this above the server's CLI shutdown wait. The server gives each CLI
+// session enough time to run gracefulShutdown cleanup before it escalates.
+const SIDECAR_GRACEFUL_TERMINATION_TIMEOUT: Duration = Duration::from_millis(8_000);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -1653,7 +1658,7 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
     });
 
     if let Err(err) = wait_for_server(control_host, port) {
-        let _ = child.kill();
+        kill_sidecar_child(child);
         return Err(format_server_startup_error(&err, &startup_logs));
     }
 
@@ -1670,7 +1675,7 @@ fn stop_server_sidecar(app: &AppHandle) {
     };
 
     if let Some(runtime) = guard.runtime.take() {
-        let _ = runtime.child.kill();
+        kill_sidecar_child(runtime.child);
     }
 }
 
@@ -1797,8 +1802,71 @@ fn stop_adapters_sidecar(app: &AppHandle) {
         return;
     };
     for child in guard.drain(..) {
+        kill_sidecar_child(child);
+    }
+}
+
+fn kill_sidecar_child(child: CommandChild) {
+    #[cfg(target_os = "windows")]
+    {
+        let pid = child.pid().to_string();
+        if StdCommand::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+        {
+            return;
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        terminate_unix_sidecar_child(child);
+    }
+
+    #[cfg(not(unix))]
+    {
         let _ = child.kill();
     }
+}
+
+#[cfg(unix)]
+fn terminate_unix_sidecar_child(child: CommandChild) {
+    let pid = child.pid();
+    let pid_text = pid.to_string();
+
+    // tauri-plugin-shell's CommandChild::kill() maps to SIGKILL on Unix.
+    // Give bundled sidecars a SIGTERM window first so the server can stop
+    // CLI sessions it spawned before the native app exits.
+    let _ = StdCommand::new("kill")
+        .args(["-TERM", &pid_text])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    let deadline = Instant::now() + SIDECAR_GRACEFUL_TERMINATION_TIMEOUT;
+    while Instant::now() < deadline {
+        if !is_unix_process_running(pid) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let _ = child.kill();
+}
+
+#[cfg(unix)]
+fn is_unix_process_running(pid: u32) -> bool {
+    StdCommand::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(unix)]
@@ -2157,6 +2225,7 @@ pub fn run() {
         .manage(AdapterState::default())
         .manage(TerminalState::default())
         .manage(AppExitState::default())
+        .manage(webview_panel::PreviewState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -2181,7 +2250,14 @@ pub fn run() {
             get_app_mode,
             set_app_mode,
             detect_portable_dir,
-            set_app_zoom
+            set_app_zoom,
+            webview_panel::preview_open,
+            webview_panel::preview_navigate,
+            webview_panel::preview_set_bounds,
+            webview_panel::preview_set_visible,
+            webview_panel::preview_close,
+            webview_panel::preview_message,
+            webview_panel::preview_eval
         ]);
 
     // macOS: native menu bar (traffic-light overlay style)

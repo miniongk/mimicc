@@ -15,6 +15,7 @@ import { useTranslation } from '../../i18n'
 import { WindowControls, showWindowControls } from './WindowControls'
 import { OpenProjectMenu } from './OpenProjectMenu'
 import { Folder, FolderOpen, SquareTerminal } from 'lucide-react'
+import { ActionDialog } from '../shared/ActionDialog'
 
 const TAB_WIDTH = 180
 const DRAG_START_THRESHOLD = 4
@@ -61,9 +62,16 @@ export function TabBar() {
   const openProjectPath = isActiveSessionTab && activeSession?.workDirExists !== false
     ? activeSession?.workDir ?? null
     : null
-  const isWorkspacePanelOpen = useWorkspacePanelStore((state) =>
+  // The right-side panel is now a single unified "workbench" with a per-session
+  // mode (file ↔ browser). The folder/browser toolbar buttons reflect whether
+  // the panel is open in their respective mode.
+  const isWorkbenchOpen = useWorkspacePanelStore((state) =>
     activeTabId && isActiveSessionTab ? state.isPanelOpen(activeTabId) : false,
   )
+  const workbenchMode = useWorkspacePanelStore((state) =>
+    activeTabId && isActiveSessionTab ? state.getMode(activeTabId) : 'workspace',
+  )
+  const isWorkspacePanelOpen = isWorkbenchOpen && workbenchMode === 'workspace'
   const isTerminalPanelOpen = useTerminalPanelStore((state) =>
     activeTabId && isActiveSessionTab ? state.isPanelOpen(activeTabId) : false,
   )
@@ -384,7 +392,15 @@ export function TabBar() {
           <ToolbarIconButton
             icon={isWorkspacePanelOpen ? <FolderOpen size={18} strokeWidth={1.9} /> : <Folder size={18} strokeWidth={1.9} />}
             label={t(isWorkspacePanelOpen ? 'tabs.hideWorkspace' : 'tabs.showWorkspace')}
-            onClick={() => useWorkspacePanelStore.getState().togglePanel(activeTabId)}
+            onClick={() => {
+              const workbench = useWorkspacePanelStore.getState()
+              if (workbench.isPanelOpen(activeTabId) && workbench.getMode(activeTabId) === 'workspace') {
+                workbench.closePanel(activeTabId)
+              } else {
+                workbench.setMode(activeTabId, 'workspace')
+                workbench.openPanel(activeTabId)
+              }
+            }}
             active={isWorkspacePanelOpen}
           />
         )}
@@ -446,47 +462,43 @@ export function TabBar() {
         </div>
       )}
 
-      {pendingCloseRequest && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/30">
-          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 max-w-sm w-full mx-4" style={{ boxShadow: 'var(--shadow-dropdown)' }}>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">
-              {pendingCloseRequest.runningSessionIds.length > 1
-                ? t('tabs.closeAllConfirmTitle')
-                : t('tabs.closeConfirmTitle')}
-            </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-              {pendingCloseRequest.runningSessionIds.length > 1
-                ? t('tabs.closeAllConfirmMessage', { count: pendingCloseRequest.runningSessionIds.length })
-                : t('tabs.closeConfirmMessage')}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setPendingCloseRequest(null)} className="px-3 py-1.5 text-xs rounded-lg border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]">
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={() => {
-                  closeTabsWithPolicy(pendingCloseRequest.tabs, pendingCloseRequest.runningSessionIds, false)
-                  setPendingCloseRequest(null)
-                }}
-                className="px-3 py-1.5 text-xs rounded-lg border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
-              >
-                {t('tabs.closeConfirmKeep')}
-              </button>
-              <button
-                onClick={() => {
-                  closeTabsWithPolicy(pendingCloseRequest.tabs, pendingCloseRequest.runningSessionIds, true)
-                  setPendingCloseRequest(null)
-                }}
-                className="px-3 py-1.5 text-xs rounded-lg bg-[var(--color-brand)] text-white hover:opacity-90"
-              >
-                {pendingCloseRequest.runningSessionIds.length > 1
-                  ? t('tabs.closeAllConfirmStop')
-                  : t('tabs.closeConfirmStop')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ActionDialog
+        open={pendingCloseRequest !== null}
+        onClose={() => setPendingCloseRequest(null)}
+        title={pendingCloseRequest && pendingCloseRequest.runningSessionIds.length > 1
+          ? t('tabs.closeAllConfirmTitle')
+          : t('tabs.closeConfirmTitle')}
+        body={pendingCloseRequest && pendingCloseRequest.runningSessionIds.length > 1
+          ? t('tabs.closeAllConfirmMessage', { count: pendingCloseRequest.runningSessionIds.length })
+          : t('tabs.closeConfirmMessage')}
+        actions={[
+          {
+            label: t('common.cancel'),
+            onClick: () => setPendingCloseRequest(null),
+            variant: 'secondary',
+          },
+          {
+            label: t('tabs.closeConfirmKeep'),
+            onClick: () => {
+              if (!pendingCloseRequest) return
+              closeTabsWithPolicy(pendingCloseRequest.tabs, pendingCloseRequest.runningSessionIds, false)
+              setPendingCloseRequest(null)
+            },
+            variant: 'secondary',
+          },
+          {
+            label: pendingCloseRequest && pendingCloseRequest.runningSessionIds.length > 1
+              ? t('tabs.closeAllConfirmStop')
+              : t('tabs.closeConfirmStop'),
+            onClick: () => {
+              if (!pendingCloseRequest) return
+              closeTabsWithPolicy(pendingCloseRequest.tabs, pendingCloseRequest.runningSessionIds, true)
+              setPendingCloseRequest(null)
+            },
+            variant: 'danger',
+          },
+        ]}
+      />
     </div>
   )
 }
