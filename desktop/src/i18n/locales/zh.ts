@@ -985,7 +985,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.networkProxyModeManual': '手动代理',
   'settings.general.networkProxyModeManualDescription': '使用下方填写的 HTTP 或 HTTPS 代理地址。',
   'settings.general.networkProxyUrl': '代理地址',
-  'settings.general.networkProxyUrlHint': '支持 HTTP 和 HTTPS 代理，例如 http://127.0.0.1:7890。',
+  'settings.general.networkProxyUrlHint': '支持 HTTP 和 HTTPS 代理。需要认证时可填写 http://user:password@127.0.0.1:7890；该 URL 会随网络设置保存。',
   'settings.general.networkProxyUrlInvalid': '请输入 HTTP 或 HTTPS 代理地址。',
   'settings.general.networkProxyUrlRequired': '请输入代理地址。',
   'settings.general.networkTimeout': 'AI 请求超时',
@@ -1664,6 +1664,7 @@ export const zh: Record<TranslationKey, string> = {
   'tabs.closeConfirmStop': '停止并关闭',
   'tabs.closeAllConfirmTitle': '多个会话运行中',
   // ─── Slash Command Descriptions ──────────────────────────────────────
+  'slashCmd.agent.description': '使用指定 Agent 执行提示',
   'slashCmd.mcp.description': '打开当前聊天上下文中可用的 MCP 工具',
   'slashCmd.skills.description': '浏览当前上下文中可直接调用的技能',
   'slashCmd.help.description': '查看可用的桌面端与 Agent 命令',

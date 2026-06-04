@@ -983,7 +983,7 @@ export const en = {
   'settings.general.networkProxyModeManual': 'Manual proxy',
   'settings.general.networkProxyModeManualDescription': 'Use the HTTP or HTTPS proxy URL entered below.',
   'settings.general.networkProxyUrl': 'Proxy URL',
-  'settings.general.networkProxyUrlHint': 'HTTP and HTTPS proxy URLs are supported, for example http://127.0.0.1:7890.',
+  'settings.general.networkProxyUrlHint': 'HTTP and HTTPS proxy URLs are supported. For authenticated proxies, use http://user:password@127.0.0.1:7890; the URL is saved with network settings.',
   'settings.general.networkProxyUrlInvalid': 'Enter an HTTP or HTTPS proxy URL.',
   'settings.general.networkProxyUrlRequired': 'Enter a proxy URL.',
   'settings.general.networkTimeout': 'AI request timeout',
@@ -1660,6 +1660,7 @@ export const en = {
   'tabs.closeConfirmMessage': 'This session is still running. What would you like to do?',
   'tabs.closeConfirmKeep': 'Keep Running',
   // ─── Slash Command Descriptions ──────────────────────────────────────
+  'slashCmd.agent.description': 'Run a prompt with a selected Agent',
   'slashCmd.mcp.description': 'Open available MCP tools for the current chat context',
   'slashCmd.skills.description': 'Browse user-invocable skills for the current chat context',
   'slashCmd.help.description': 'Show available desktop and agent commands',

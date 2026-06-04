@@ -239,6 +239,30 @@ describe('ActivitySettings', () => {
     expect(editButton.closest('div')).toHaveClass('group/activity-profile')
   })
 
+  it('uses a balanced responsive summary grid instead of the loose medium-width layout', async () => {
+    render(<ActivitySettings />)
+
+    await flushActivityLoad()
+
+    const summaryPanel = screen.getByText('Total tokens').closest('section')
+    expect(summaryPanel).toHaveClass('activity-summary-panel')
+
+    const summaryGrid = summaryPanel?.querySelector('.activity-summary-grid')
+    expect(summaryGrid).not.toHaveClass('sm:grid-cols-2')
+    expect(summaryGrid).not.toHaveClass('lg:grid-cols-5')
+    expect(summaryGrid).not.toHaveClass('xl:grid-cols-5')
+
+    const primaryMetric = screen.getByText('Total tokens').closest('.activity-summary-metric')
+    expect(primaryMetric).toHaveClass('activity-summary-metric-primary')
+    expect(primaryMetric).not.toHaveClass('sm:col-span-2')
+    expect(primaryMetric).not.toHaveClass('lg:col-span-1')
+
+    const longestTaskValue = screen.getByText('0m')
+    expect(longestTaskValue).toHaveClass('activity-summary-value')
+    expect(longestTaskValue).not.toHaveClass('truncate')
+    expect(longestTaskValue).not.toHaveClass('break-words')
+  })
+
   it('supports localized heatmap mode switches and persisted display name edits', async () => {
     useSettingsStore.setState({ locale: 'zh' })
     render(<ActivitySettings />)

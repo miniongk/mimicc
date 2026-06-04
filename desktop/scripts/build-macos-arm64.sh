@@ -7,7 +7,6 @@ DESKTOP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${DESKTOP_DIR}/.." && pwd)"
 
 TARGET_TRIPLE="aarch64-apple-darwin"
-TAURI_TARGET_DIR="${DESKTOP_DIR}/src-tauri/target"
 CANONICAL_OUTPUT_DIR="${DESKTOP_DIR}/build-artifacts/macos-arm64"
 APP_BUNDLE_NAME="Claude Code 咪咪.app"
 APP_BUNDLE_ID="com.claude-code-haha.desktop"
@@ -17,21 +16,18 @@ usage() {
 Build Claude Code 咪咪 desktop for macOS Apple Silicon and output a DMG.
 
 Usage:
-  ./desktop/scripts/build-macos-arm64.sh [extra tauri build args...]
+  ./desktop/scripts/build-macos-arm64.sh [extra electron-builder args...]
 
 Environment:
   SKIP_INSTALL=1   Skip `bun install` in the repo root and desktop app.
-  SIGN_BUILD=1     Remove the default `--no-sign` flag and allow signed builds.
+  SIGN_BUILD=1     Allow electron-builder to auto-discover signing identities.
+  REBUILD_NATIVE=1 Run `electron-builder install-app-deps` before packaging.
+  MAC_TARGETS      Electron Builder macOS targets. Defaults to "dmg zip".
+  SKIP_PACKAGE_SMOKE=1
+                   Skip package-smoke verification after copying artifacts.
+  REQUIRE_MACOS_GATEKEEPER_SMOKE=1
+                   Require Gatekeeper approval during post-build package-smoke.
   OPEN_OUTPUT=1    Open the canonical artifact output directory in Finder after a successful build.
-  PRESERVE_TAURI_TARGET=1
-                  Keep Tauri/Rust target cache for a faster incremental build.
-                  By default this script removes the macOS target cache so
-                  packaged WebView assets cannot be silently reused.
-
-Examples:
-  ./desktop/scripts/build-macos-arm64.sh
-  SKIP_INSTALL=1 ./desktop/scripts/build-macos-arm64.sh
-  SIGN_BUILD=1 ./desktop/scripts/build-macos-arm64.sh --skip-stapling
 EOF
 }
 
@@ -50,12 +46,39 @@ if [[ "$(uname -m)" != "arm64" ]]; then
   exit 1
 fi
 
-for command in bun cargo rustc codesign hdiutil; do
+for command in bun codesign hdiutil; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "[build-macos-arm64] Missing required command: ${command}" >&2
     exit 1
   fi
 done
+
+read -r -a MAC_TARGET_ARRAY <<< "${MAC_TARGETS:-dmg zip}"
+if [[ "${#MAC_TARGET_ARRAY[@]}" -eq 0 ]]; then
+  echo "[build-macos-arm64] MAC_TARGETS must contain at least one electron-builder macOS target." >&2
+  exit 1
+fi
+
+has_mac_target() {
+  local target="$1"
+  for candidate in "${MAC_TARGET_ARRAY[@]}"; do
+    if [[ "${candidate}" == "${target}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if has_mac_target "dmg"; then
+  STALE_DMG_MOUNTS="$(hdiutil info | grep -F "${ELECTRON_OUTPUT_DIR}/.temp" || true)"
+  if [[ -n "${STALE_DMG_MOUNTS}" ]]; then
+    echo "[build-macos-arm64] Found stale Electron Builder temporary DMG mounts in this worktree:" >&2
+    echo "${STALE_DMG_MOUNTS}" >&2
+    echo "[build-macos-arm64] Detach the stale disk image or restart DiskImages before building the dmg target." >&2
+    echo "[build-macos-arm64] To verify the update zip path without DMG, rerun with MAC_TARGETS=zip." >&2
+    exit 1
+  fi
+fi
 
 if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
   echo "[build-macos-arm64] Installing root dependencies..."
@@ -65,88 +88,43 @@ if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
   (cd "${DESKTOP_DIR}" && bun install)
 fi
 
-# ── 清理 + 显式预热前端 / sidecar ────────────────────────────
-# 之前遇到过两类"改了源码,build 出来的 .app 还是旧行为"的诡异 case:
-#   1) Bun.build / Tauri bundler 某一层缓存把旧 sidecar binary 复用进新 .app
-#   2) Tauri/Rust target 缓存复用旧 claude-code-desktop,导致新 dist 没被嵌进去
-# 第二类尤其隐蔽: dist 是新的,sidecar 也是新的,但 WebView 运行的还是旧前端。
-#
-# 默认做四件事强制 fresh build:
-#   1) 硬删 sidecar 源 binary + Tauri target/bundle 目录 + 前端 dist
-#   2) 显式跑 bun run build + bun run build:sidecars
-#   3) tauri build 用 --config 覆盖 beforeBuildCommand 为 true(no-op),
-#      避免 sidecar 被重复编译浪费 ~10s
-#   4) 复制到 canonical output 前再次清空输出目录
-# 任一步失败,整个脚本立即退出(set -e)。
-echo "[build-macos-arm64] Cleaning stale sidecar binaries, frontend output, and Tauri bundle cache..."
-rm -rf "${DESKTOP_DIR}/src-tauri/binaries/claude-sidecar-"*
+echo "[build-macos-arm64] Cleaning stale Electron outputs..."
 rm -rf "${DESKTOP_DIR}/dist"
+rm -rf "${DESKTOP_DIR}/electron-dist"
+rm -rf "${ELECTRON_OUTPUT_DIR}"
+rm -rf "${CANONICAL_OUTPUT_DIR}"
 rm -f "${DESKTOP_DIR}/tsconfig.tsbuildinfo"
+rm -rf "${DESKTOP_DIR}/src-tauri/binaries/claude-sidecar-"*
 
-if [[ "${PRESERVE_TAURI_TARGET:-0}" == "1" ]]; then
-  echo "[build-macos-arm64] PRESERVE_TAURI_TARGET=1: keeping Rust dependency cache, clearing app-specific artifacts only..."
-  rm -rf "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/bundle"
-  rm -rf "${DESKTOP_DIR}/src-tauri/target/release/bundle"
-  rm -f "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/claude-code-desktop"
-  rm -f "${DESKTOP_DIR}/src-tauri/target/release/claude-code-desktop"
-  find "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/build" \
-    -maxdepth 1 -name 'claude-code-desktop-*' -exec rm -rf {} + 2>/dev/null || true
-  find "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/.fingerprint" \
-    -maxdepth 1 -name 'claude-code-desktop-*' -exec rm -rf {} + 2>/dev/null || true
-  find "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/deps" \
-    -maxdepth 1 \( -name 'claude_code_desktop-*' -o -name 'libclaude_code_desktop-*' \) -exec rm -f {} + 2>/dev/null || true
-else
-  echo "[build-macos-arm64] Removing Tauri target cache for ${TARGET_TRIPLE} to force fresh embedded frontend assets..."
-  rm -rf "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}"
-  rm -rf "${DESKTOP_DIR}/src-tauri/target/release/bundle"
-  rm -f "${DESKTOP_DIR}/src-tauri/target/release/claude-code-desktop"
-  find "${DESKTOP_DIR}/src-tauri/target/release/build" \
-    -maxdepth 1 -name 'claude-code-desktop-*' -exec rm -rf {} + 2>/dev/null || true
-  find "${DESKTOP_DIR}/src-tauri/target/release/.fingerprint" \
-    -maxdepth 1 -name 'claude-code-desktop-*' -exec rm -rf {} + 2>/dev/null || true
-  find "${DESKTOP_DIR}/src-tauri/target/release/deps" \
-    -maxdepth 1 \( -name 'claude_code_desktop-*' -o -name 'libclaude_code_desktop-*' \) -exec rm -f {} + 2>/dev/null || true
+echo "[build-macos-arm64] Building sidecars for ${TARGET_TRIPLE}..."
+(cd "${DESKTOP_DIR}" && SIDECAR_TARGET_TRIPLE="${TARGET_TRIPLE}" bun run build:sidecars)
+
+echo "[build-macos-arm64] Building renderer and Electron main/preload bundles..."
+(cd "${DESKTOP_DIR}" && bun run build && bun run build:electron)
+
+if [[ "${REBUILD_NATIVE:-0}" == "1" ]]; then
+  echo "[build-macos-arm64] Rebuilding native dependencies for Electron ABI..."
+  (cd "${DESKTOP_DIR}" && bunx electron-builder install-app-deps)
+  (cd "${DESKTOP_DIR}" && bun run prepare:node-pty)
 fi
 
-echo "[build-macos-arm64] Rebuilding frontend (tsc + vite)..."
-(cd "${DESKTOP_DIR}" && bun run build)
+echo "[build-macos-arm64] Cleaning empty dmg-builder cache directories..."
+(cd "${DESKTOP_DIR}" && bash ./scripts/clean-dmg-builder-cache.sh)
 
-echo "[build-macos-arm64] Rebuilding sidecar for ${TARGET_TRIPLE}..."
-(cd "${DESKTOP_DIR}" && TAURI_ENV_TARGET_TRIPLE="${TARGET_TRIPLE}" bun run build:sidecars)
-
-TAURI_ARGS=(
-  node
-  ./node_modules/@tauri-apps/cli/tauri.js
-  build
-  --target
-  "${TARGET_TRIPLE}"
-  --bundles
-  app,dmg
-  --ci
-  --config
-  '{"build":{"beforeBuildCommand":"true"}}'
-)
-
+BUILDER_ARGS=(bunx electron-builder --mac "${MAC_TARGET_ARRAY[@]}" --arm64 --publish never)
 if [[ "${SIGN_BUILD:-0}" != "1" ]]; then
-  TAURI_ARGS+=(--no-sign)
+  export CSC_IDENTITY_AUTO_DISCOVERY=false
+  # package.json sets mac.notarize=true for the signed CI release path. A local
+  # unsigned build has no Developer ID credentials, so explicitly disable
+  # notarization here to keep `electron:package` working without an Apple account.
+  BUILDER_ARGS+=(-c.mac.notarize=false)
 fi
-
 if [[ "$#" -gt 0 ]]; then
-  TAURI_ARGS+=("$@")
+  BUILDER_ARGS+=("$@")
 fi
 
-echo "[build-macos-arm64] Building DMG for ${TARGET_TRIPLE}..."
-(
-  cd "${DESKTOP_DIR}"
-  export TAURI_ENV_TARGET_TRIPLE="${TARGET_TRIPLE}"
-  "${TAURI_ARGS[@]}"
-)
-
-TARGETED_DMG_DIR="${TAURI_TARGET_DIR}/${TARGET_TRIPLE}/release/bundle/dmg"
-FALLBACK_DMG_DIR="${TAURI_TARGET_DIR}/release/bundle/dmg"
-TARGETED_APP_DIR="${TAURI_TARGET_DIR}/${TARGET_TRIPLE}/release/bundle/macos"
-FALLBACK_APP_DIR="${TAURI_TARGET_DIR}/release/bundle/macos"
-LEGACY_BUNDLE_ROOT="${TAURI_TARGET_DIR}/release/bundle"
+echo "[build-macos-arm64] Packaging Electron app..."
+(cd "${DESKTOP_DIR}" && "${BUILDER_ARGS[@]}")
 
 mkdir -p "${CANONICAL_OUTPUT_DIR}"
 find "${CANONICAL_OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
@@ -309,37 +287,27 @@ if [[ -n "${LATEST_APP}" ]]; then
 elif [[ -n "${LATEST_DMG}" ]]; then
   cp -f "${LATEST_DMG}" "${CANONICAL_OUTPUT_DIR}/"
 fi
+find "${ELECTRON_OUTPUT_DIR}" -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest-mac.yml' \) -exec cp -f {} "${CANONICAL_OUTPUT_DIR}/" \;
 
 cat > "${CANONICAL_OUTPUT_DIR}/BUILD_INFO.txt" <<EOF
 Target triple: ${TARGET_TRIPLE}
+Builder output: ${ELECTRON_OUTPUT_DIR}
 Canonical output: ${CANONICAL_OUTPUT_DIR}
-Canonical app: ${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}
-Canonical DMG: ${CANONICAL_DMG:-not found}
-Tauri app output: ${LATEST_APP:-not found}
-Tauri DMG output: ${LATEST_DMG:-not found}
 Built at: $(date '+%Y-%m-%d %H:%M:%S %z')
 EOF
 
-if [[ -d "${LEGACY_BUNDLE_ROOT}" ]]; then
-  rm -rf "${LEGACY_BUNDLE_ROOT}"
+if [[ "${SKIP_PACKAGE_SMOKE:-0}" != "1" ]]; then
+  PACKAGE_SMOKE_ARGS=(bun run test:package-smoke --platform macos --package-kind release --artifacts-dir desktop/build-artifacts/macos-arm64)
+  if [[ "${REQUIRE_MACOS_GATEKEEPER_SMOKE:-0}" == "1" ]]; then
+    PACKAGE_SMOKE_ARGS+=(--require-macos-gatekeeper)
+  fi
+  echo "[build-macos-arm64] Running package smoke..."
+  (cd "${REPO_ROOT}" && "${PACKAGE_SMOKE_ARGS[@]}")
 fi
 
 echo
 echo "[build-macos-arm64] Build finished."
-if [[ -n "${LATEST_APP}" ]]; then
-  echo "[build-macos-arm64] Tauri app output (identity normalized): ${LATEST_APP}"
-else
-  echo "[build-macos-arm64] No .app found in ${TARGETED_APP_DIR} or ${FALLBACK_APP_DIR}" >&2
-fi
-
-if [[ -n "${LATEST_DMG}" ]]; then
-  echo "[build-macos-arm64] Tauri DMG output (replaced with canonical DMG): ${LATEST_DMG}"
-else
-  echo "[build-macos-arm64] No DMG found in ${TARGETED_DMG_DIR} or ${FALLBACK_DMG_DIR}" >&2
-fi
-
 echo "[build-macos-arm64] Canonical output: ${CANONICAL_OUTPUT_DIR}"
-echo "[build-macos-arm64] Removed legacy bundle dir: ${LEGACY_BUNDLE_ROOT}"
 
 if [[ "${OPEN_OUTPUT:-0}" == "1" ]]; then
   open "${CANONICAL_OUTPUT_DIR}"
