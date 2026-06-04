@@ -1,23 +1,23 @@
-# Claude Code Haha
+# Claude Code 咪咪
 
 <p align="center">
-  <img src="docs/images/app-icon.png" alt="Claude Code Haha" width="240">
+  <img src="docs/images/app-icon.png" alt="Claude Code 咪咪" width="240">
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/pulls)
-[![License](https://img.shields.io/github/license/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/miniongk/mimicc?style=social)](https://github.com/miniongk/mimicc/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/miniongk/mimicc?style=social)](https://github.com/miniongk/mimicc/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/miniongk/mimicc)](https://github.com/miniongk/mimicc/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/miniongk/mimicc)](https://github.com/miniongk/mimicc/pulls)
+[![License](https://img.shields.io/github/license/miniongk/mimicc)](https://github.com/miniongk/mimicc/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-当前-blue)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README.en.md)
 [![Docs](https://img.shields.io/badge/📖_文档站点-Visit-FF7A00)](https://claudecode-haha.relakkesyang.org)
 
 </div>
 
-Claude Code Haha 基于 2026-03-31 从 Anthropic npm registry 泄露的 Claude Code 源码修复而来，现在主要是一个**桌面端 Claude Code 工作台**：把会话、多项目、分支 / Worktree、右侧代码改动、代码 Diff、权限审批、模型提供商、Computer Use、H5 远程访问、IM 接入和定时任务集中到一个 macOS / Windows / Linux APP 里。
+Claude Code 咪咪 基于 2026-03-31 从 Anthropic npm registry 泄露的 Claude Code 源码修复而来，现在主要是一个**桌面端 Claude Code 工作台**：把会话、多项目、分支 / Worktree、右侧代码改动、代码 Diff、权限审批、模型提供商、Computer Use、H5 远程访问、IM 接入和定时任务集中到一个 macOS / Windows / Linux APP 里。
 
 <p align="center">
   <a href="#桌面端预览">桌面端预览</a> · <a href="#安装桌面端">安装桌面端</a> · <a href="#桌面端亮点">桌面端亮点</a> · <a href="#赞助与合作">赞助与合作</a> · <a href="#更多文档">更多文档</a>
@@ -27,10 +27,10 @@ Claude Code Haha 基于 2026-03-31 从 Anthropic npm registry 泄露的 Claude C
 
 ## 桌面端预览
 
-Claude Code Haha 的桌面端把会话、多项目、分支 / Worktree、右侧代码改动、代码 Diff、权限确认、提供商配置和远程入口集中到一个图形化工作台里，适合不想长期停留在终端里的日常开发工作流。
+Claude Code 咪咪 的桌面端把会话、多项目、分支 / Worktree、右侧代码改动、代码 Diff、权限确认、提供商配置和远程入口集中到一个图形化工作台里，适合不想长期停留在终端里的日常开发工作流。
 
 <p align="center">
-  <a href="https://github.com/NanmiCoder/cc-haha/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="下载桌面端"></a>
+  <a href="https://github.com/miniongk/mimicc/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="下载桌面端"></a>
   &nbsp;
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_安装指南-Guide-gray?style=for-the-badge" alt="安装指南"></a>
 </p>
@@ -54,7 +54,7 @@ Claude Code Haha 的桌面端把会话、多项目、分支 / Worktree、右侧�
 
 ## 安装桌面端
 
-1. 前往 [Releases](https://github.com/NanmiCoder/cc-haha/releases) 下载 macOS / Windows / Linux 桌面端安装包。
+1. 前往 [Releases](https://github.com/miniongk/mimicc/releases) 下载 macOS / Windows / Linux 桌面端安装包。
 2. 首次启动后，在桌面端设置里配置模型提供商、API Key 和默认模型。
 3. 当前版本暂未签名，首次安装需要手动放行一次（macOS 解除隔离、Windows 点"仍要运行"）。详见 [桌面端安装指南](docs/desktop/04-installation.md)。
 
@@ -147,31 +147,6 @@ cp .env.example .env
 
 ---
 
-## ☕ 请作者喝杯咖啡
-
-如果这个项目对您有帮助，欢迎打赏支持，您的每一份支持都是我持续更新的动力 ❤️
-
-<table>
-<tr>
-<td align="center" width="33%">
-<img src="docs/images/donate/wechat_pay.jpeg" width="250" alt="微信赞赏"><br>
-<b>微信赞赏</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/donate/zfb_pay.png" width="250" alt="支付宝"><br>
-<b>支付宝</b>
-</td>
-<td align="center" width="33%">
-<a href="https://buymeacoffee.com/relakkes" target="_blank">
-<img src="docs/images/donate/bmc_button.png" width="250" alt="Buy Me a Coffee">
-</a><br>
-<b>Buy Me a Coffee</b>
-</td>
-</tr>
-</table>
-
----
-
 ## 技术栈
 
 | 类别 | 技术 |
@@ -197,13 +172,13 @@ cp .env.example .env
 
 ## ⭐ Star 趋势图
 
-如果这个项目对您有帮助，请给个 ⭐ Star 支持一下，让更多的人看到 Claude Code Haha！
+如果这个项目对您有帮助，请给个 ⭐ Star 支持一下，让更多的人看到 Claude Code 咪咪！
 
-<a href="https://www.star-history.com/#NanmiCoder/cc-haha&Date">
+<a href="https://www.star-history.com/#miniongk/mimicc&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=miniongk/mimicc&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=miniongk/mimicc&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=miniongk/mimicc&type=Date" />
   </picture>
 </a>
 

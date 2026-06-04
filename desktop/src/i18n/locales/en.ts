@@ -921,7 +921,7 @@ export const en = {
   'settings.general.notificationsStatusUnsupported': 'Unavailable in this environment',
   'settings.general.notificationsAuthorize': 'Authorize',
   'settings.general.notificationsOpenSettings': 'Open Settings',
-  'settings.general.notificationsTestTitle': 'Claude Code Haha notifications are enabled',
+  'settings.general.notificationsTestTitle': 'Claude Code 咪咪 notifications are enabled',
   'settings.general.notificationsTestBody': 'Permission prompts and completed agent replies will now use system notifications.',
   'settings.general.chatSendBehaviorTitle': 'Message Sending',
   'settings.general.chatSendBehaviorDescription': 'Choose how the desktop chat composer submits messages.',

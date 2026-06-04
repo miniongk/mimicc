@@ -923,7 +923,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.notificationsStatusUnsupported': '当前环境不可用',
   'settings.general.notificationsAuthorize': '授权通知',
   'settings.general.notificationsOpenSettings': '打开系统设置',
-  'settings.general.notificationsTestTitle': 'Claude Code Haha 通知已启用',
+  'settings.general.notificationsTestTitle': 'Claude Code 咪咪 通知已启用',
   'settings.general.notificationsTestBody': '后续授权确认和 Agent 回复完成都会通过系统通知提醒。',
   'settings.general.chatSendBehaviorTitle': '消息发送方式',
   'settings.general.chatSendBehaviorDescription': '选择桌面端对话输入框如何发送消息。',

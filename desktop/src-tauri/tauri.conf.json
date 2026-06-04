@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/nicegui/static/tauri-schema-v2.json",
-  "productName": "Claude Code Haha",
-  "version": "0.3.2",
-  "identifier": "com.claude-code-haha.desktop",
+  "productName": "Claude Code 咪咪",
+  "version": "0.4.0",
+  "identifier": "com.claude-code-mimicc.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Claude Code Haha",
+        "title": "Claude Code 咪咪",
         "width": 1440,
         "height": 960,
         "minWidth": 960,
@@ -29,9 +29,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlCOUIwRDExQTc5RTFGMzYKUldRMkg1Nm5FUTJibTJ2cGlHY0pkL0dGemxXMUlzc01pVTVMM1U3WGpmWUtrUC8wK2ErSXhLKzEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNFQkQwMEMyRDdDNzk3RDAKUldUUWw4Zlh3Z0M5UG04WlY1RitaSkM3aHQ4Ly9WR3ZjKzYvaHAvckxwWElpcFE5R0w0NHdNKzgK",
       "endpoints": [
-        "https://github.com/NanmiCoder/cc-haha/releases/latest/download/latest.json"
+        "https://github.com/miniongk/mimicc/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
@@ -40,7 +40,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
